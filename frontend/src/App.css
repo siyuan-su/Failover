@@ -17,9 +17,19 @@ h2 {
   margin-top: 40px;
 }
 
+.create-section {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+input {
+  padding: 10px;
+  width: 280px;
+}
+
 button {
   padding: 10px 16px;
-  margin-bottom: 20px;
   cursor: pointer;
 }
 
