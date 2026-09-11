@@ -35,3 +35,23 @@ app.get("/api/architectures", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+app.post("/api/architectures", (req, res) => {
+  const { name } = req.body;
+
+  if (!name || name.trim() == "") {
+    return res.status(400).json({
+      error: "Architecture name is required",
+    });
+  }
+
+  const newArchitecture = {
+    id: Date.now(),
+    name: name.trim(),
+    status: "Ready",
+  };
+
+  architectures.push(newArchitecture);
+
+  res.status(201).json(newArchitecture);
+});

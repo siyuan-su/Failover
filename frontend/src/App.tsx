@@ -18,16 +18,22 @@ function App() {
     setArchitectures(data);
   }
 
-  function createArchitecture() {
+  async function createArchitecture() {
     if (newArchitectureName.trim() === "") {
       return;
     }
 
-    const newArchitecture: Architecture = {
-      id: Date.now(),
-      name: newArchitectureName,
-      status: "Ready",
-    };
+    const response = await fetch("http://localhost:5000/api/architectures", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: newArchitectureName,
+      }),
+    });
+
+    const newArchitecture = await response.json();
 
     setArchitectures([...architectures, newArchitecture]);
     setNewArchitectureName("");
