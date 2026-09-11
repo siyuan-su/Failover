@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "./App.css";
 
 type Architecture = {
@@ -8,20 +8,15 @@ type Architecture = {
 };
 
 function App() {
-  const [architectures, setArchitectures] = useState<Architecture[]>([
-    {
-      id: 1,
-      name: "Black Friday Architecture",
-      status: "Ready",
-    },
-    {
-      id: 2,
-      name: "Multi-Region Failover Test",
-      status: "Ready",
-    },
-  ]);
-
+  const [architectures, setArchitectures] = useState<Architecture[]>([]);
   const [newArchitectureName, setNewArchitectureName] = useState("");
+
+  async function loadArchitectures() {
+    const response = await fetch("http://localhost:5000/api/architectures");
+    const data = await response.json();
+
+    setArchitectures(data);
+  }
 
   function createArchitecture() {
     if (newArchitectureName.trim() === "") {
@@ -37,6 +32,10 @@ function App() {
     setArchitectures([...architectures, newArchitecture]);
     setNewArchitectureName("");
   }
+
+  useEffect(() => {
+    loadArchitectures();
+  }, []);
 
   return (
     <main>

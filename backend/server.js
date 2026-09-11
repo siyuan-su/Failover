@@ -15,6 +15,23 @@ app.get("/", (req, res) => {
 
 const PORT = 5000;
 
+const architectures = [
+  {
+    id: 1,
+    name: "Black Friday Architecture",
+    status: "Ready",
+  },
+  {
+    id: 2,
+    name: "Multi-Region Failover Test",
+    status: "Ready",
+  },
+];
+
+app.get("/api/architectures", (req, res) => {
+  res.json(architectures);
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
