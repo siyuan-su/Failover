@@ -1,11 +1,13 @@
 import {
   ReactFlow,
+  ReactFlowProvider,
   Background,
   Controls,
   ControlButton,
   addEdge,
   useEdgesState,
   useNodesState,
+  useReactFlow,
   type Connection,
   type Edge,
   type Node,
@@ -188,7 +190,7 @@ function Dashboard() {
   );
 }
 
-function ArchitecturePage() {
+function ArchitectureEditor() {
   const { id } = useParams();
 
   const [architecture, setArchitecture] =
@@ -196,8 +198,15 @@ function ArchitecturePage() {
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  
+
+  const { screenToFlowPosition } = useReactFlow();
+
   const [locked, setLocked] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  const selectedNode = nodes.find(
+    (node) => node.id === selectedNodeId
+  );
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -266,20 +275,56 @@ function ArchitecturePage() {
     );
   }
 
-  function addNode(componentType: string) {
+  function onDragStart(
+    event: React.DragEvent<HTMLButtonElement>,
+    componentType: string
+  ) {
+    if (locked) {
+      event.preventDefault();
+      return;
+    }
+
+    event.dataTransfer.setData(
+      "application/reactflow",
+      componentType
+    );
+
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function onDrop(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+
+    if (locked) {
+      return;
+    }
+
+    const componentType = event.dataTransfer.getData(
+      "application/reactflow"
+    );
+
+    if (!componentType) {
+      return;
+    }
+
+    const position = screenToFlowPosition({
+      x: event.clientX,
+      y: event.clientY,
+    });
+
     const newNode: Node = {
       id: crypto.randomUUID(),
-
       type: "cloudNode",
-
-      position: {
-        x: 100 + nodes.length * 40,
-        y: 100 + nodes.length * 40,
-      },
+      position,
 
       data: {
         label: componentType,
-        componentType: componentType,
+        componentType,
+
+        provider: "AWS",
+        region: "us-east-1",
+        capacity: 500,
+        status: "Healthy",
       },
     };
 
@@ -287,6 +332,53 @@ function ArchitecturePage() {
       ...currentNodes,
       newNode,
     ]);
+  }
+
+  function onDragOver(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+
+  function deleteComponent(nodeId: string) {
+    setNodes((currentNodes) =>
+      currentNodes.filter((node) => node.id !== nodeId)
+    );
+
+    setEdges((currentEdges) =>
+      currentEdges.filter(
+        (edge) =>
+          edge.source !== nodeId &&
+          edge.target !== nodeId
+      )
+    );
+
+    setSelectedNodeId(null);
+  }
+
+  function updateSelectedNode(
+    field: string,
+    value: string | number
+  ) {
+    if (!selectedNodeId) {
+      return;
+    }
+
+    setNodes((currentNodes) =>
+      currentNodes.map((node) => {
+        if (node.id !== selectedNodeId) {
+          return node;
+        }
+
+        return {
+          ...node,
+
+          data: {
+            ...node.data,
+            [field]: value,
+          },
+        };
+      })
+    );
   }
 
   if (!architecture) {
@@ -304,30 +396,190 @@ function ArchitecturePage() {
           Save Architecture
         </button>
 
+        {selectedNodeId && !locked && (
+          <button
+            className="delete-component-button"
+            onClick={() => deleteComponent(selectedNodeId)}
+          >
+            Delete Selected Component
+          </button>
+        )}
+
         <p>Components</p>
 
-        <button onClick={() => addNode("Load Balancer")}>
-          + Load Balancer
+        <button
+          draggable={!locked}
+          onDragStart={(event) =>
+            onDragStart(event, "Load Balancer")
+          }
+        >
+          Load Balancer
         </button>
 
-        <button onClick={() => addNode("API Server")}>
-          + API Server
+        <button
+          draggable={!locked}
+          onDragStart={(event) =>
+            onDragStart(event, "API Server")
+          }
+        >
+          API Server
         </button>
 
-        <button onClick={() => addNode("MySQL Database")}>
-          + MySQL Database
+        <button
+          draggable={!locked}
+          onDragStart={(event) =>
+            onDragStart(event, "MySQL Database")
+          }
+        >
+          MySQL Database
         </button>
 
-        <button onClick={() => addNode("Redis Cache")}>
-          + Redis Cache
+        <button
+          draggable={!locked}
+          onDragStart={(event) =>
+            onDragStart(event, "Redis Cache")
+          }
+        >
+          Redis Cache
         </button>
 
-        <button onClick={() => addNode("Worker")}>
-          + Worker
+        <button
+          draggable={!locked}
+          onDragStart={(event) =>
+            onDragStart(event, "Worker")
+          }
+        >
+          Worker
         </button>
       </aside>
 
-      <div className="flow-container">
+      {selectedNode && !locked && (
+        <div className="properties-panel">
+          <h3>Component Settings</h3>
+
+          <label>
+            Name
+
+            <input
+              value={String(selectedNode.data.label || "")}
+              onChange={(event) =>
+                updateSelectedNode(
+                  "label",
+                  event.target.value
+                )
+              }
+            />
+          </label>
+
+          <label>
+            Provider
+
+            <select
+              value={String(
+                selectedNode.data.provider || "AWS"
+              )}
+              onChange={(event) => {
+                const provider = event.target.value;
+
+                updateSelectedNode(
+                  "provider",
+                  provider
+                );
+
+                if (provider === "AWS") {
+                  updateSelectedNode(
+                    "region",
+                    "us-east-1"
+                  );
+                } else {
+                  updateSelectedNode(
+                    "region",
+                    "canada-central"
+                  );
+                }
+              }}
+            >
+              <option value="AWS">
+                AWS
+              </option>
+
+              <option value="Azure">
+                Azure
+              </option>
+            </select>
+          </label>
+
+          <label>
+            Region
+
+            <select
+              value={String(
+                selectedNode.data.region || "us-east-1"
+              )}
+              onChange={(event) =>
+                updateSelectedNode(
+                  "region",
+                  event.target.value
+                )
+              }
+            >
+              {selectedNode.data.provider === "Azure" ? (
+                <>
+                  <option value="canada-central">
+                    Canada Central
+                  </option>
+
+                  <option value="east-us">
+                    East US
+                  </option>
+
+                  <option value="west-europe">
+                    West Europe
+                  </option>
+                </>
+              ) : (
+                <>
+                  <option value="us-east-1">
+                    us-east-1
+                  </option>
+
+                  <option value="us-west-2">
+                    us-west-2
+                  </option>
+
+                  <option value="ca-central-1">
+                    ca-central-1
+                  </option>
+                </>
+              )}
+            </select>
+          </label>
+
+          <label>
+            Capacity
+
+            <input
+              type="number"
+              min="1"
+              value={Number(
+                selectedNode.data.capacity || 500
+              )}
+              onChange={(event) =>
+                updateSelectedNode(
+                  "capacity",
+                  Number(event.target.value)
+                )
+              }
+            />
+          </label>
+        </div>
+      )}
+
+      <div
+        className="flow-container"
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+      >
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -335,7 +587,17 @@ function ArchitecturePage() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          nodesDraggable={!locked}
+          deleteKeyCode={["Backspace", "Delete"]}
+          onNodeClick={(_, node) => {
+            setSelectedNodeId(node.id);
+          }}
+          onNodesDelete={() => {
+            setSelectedNodeId(null);
+          }}
+          onPaneClick={() => {
+            setSelectedNodeId(null);
+          }}
+          nodesDraggable ={!locked}
           nodesConnectable={!locked}
           elementsSelectable={!locked}
           panOnDrag={!locked}
@@ -368,6 +630,14 @@ function ArchitecturePage() {
         </ReactFlow>
       </div>
     </div>
+  );
+}
+
+function ArchitecturePage() {
+  return (
+    <ReactFlowProvider>
+      <ArchitectureEditor />
+    </ReactFlowProvider>
   );
 }
 

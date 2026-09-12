@@ -13,6 +13,10 @@ import "./CloudNode.css";
 type CloudNodeData = {
   label: string;
   componentType: string;
+  provider?: string;
+  region?: string;
+  capacity?: number;
+  status?: string;
 };
 
 function getIcon(componentType: string) {
@@ -75,23 +79,33 @@ export default function CloudNode({ data }: NodeProps) {
         </div>
 
         <div className="tooltip-row">
-          <span>Type</span>
-          <span>{nodeData.componentType}</span>
-        </div>
-
-        <div className="tooltip-row">
-          <span>Status</span>
-          <span className="healthy-text">Healthy</span>
+          <span>Provider</span>
+          <span>{nodeData.provider || "AWS"}</span>
         </div>
 
         <div className="tooltip-row">
           <span>Region</span>
-          <span>us-east-1</span>
+          <span>{nodeData.region || "us-east-1"}</span>
         </div>
 
         <div className="tooltip-row">
           <span>Capacity</span>
-          <span>1,000 req/s</span>
+          <span>
+            {nodeData.capacity || 500} req/s
+          </span>
+        </div>
+
+        <div className="tooltip-row">
+          <span>Status</span>
+          <span
+            className={
+              nodeData.status === "Healthy" || !nodeData.status
+                ? "healthy-text"
+                : "unhealthy-text"
+            }
+          >
+            {nodeData.status || "Healthy"}
+          </span>
         </div>
       </div>
     </div>

@@ -212,6 +212,14 @@ body {
   box-sizing: border-box;
 }
 
+.sidebar button[draggable="true"] {
+  cursor: grab;
+}
+
+.sidebar button[draggable="true"]:active {
+  cursor: grabbing;
+}
+
 .flow-container {
   flex: 1;
   height: 100vh;
@@ -294,4 +302,77 @@ body {
 
 .react-flow {
   background: #0d1319;
+}
+
+.delete-component-button {
+  background: #2a1717 !important;
+  color: #ffb4b4 !important;
+
+  border: 1px solid #713333 !important;
+
+  padding: 11px 14px;
+  border-radius: 8px;
+
+  cursor: pointer;
+}
+
+.delete-component-button:hover {
+  background: #3a1b1b !important;
+  border-color: #a94444 !important;
+}
+.unhealthy-text {
+  color: #ff6b6b;
+}
+
+.properties-panel {
+  margin-top: 20px;
+  padding-top: 18px;
+
+  border-top: 1px solid #2b3642;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 12px;
+}
+
+.properties-panel h3 {
+  margin: 0 0 6px;
+
+  color: #f4f4f5;
+  font-size: 16px;
+}
+
+.properties-panel label {
+  display: flex;
+  flex-direction: column;
+
+  gap: 6px;
+
+  color: #9ca3af;
+
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.properties-panel input,
+.properties-panel select {
+  width: 100%;
+
+  box-sizing: border-box;
+
+  padding: 9px 10px;
+
+  background: #10161c;
+  color: #f4f4f5;
+
+  border: 1px solid #34404b;
+  border-radius: 7px;
+
+  outline: none;
+}
+
+.properties-panel input:focus,
+.properties-panel select:focus {
+  border-color: #1687ff;
 }

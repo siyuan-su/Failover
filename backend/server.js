@@ -37,7 +37,7 @@ app.get("/api/architectures", (req, res) => {
   });
 });
 
-// Create an architecture
+// Create architecture
 app.post("/api/architectures", (req, res) => {
   const { name } = req.body;
 
@@ -71,8 +71,7 @@ app.post("/api/architectures", (req, res) => {
   });
 });
 
-const PORT = 5000;
-
+// Delete architecture
 app.delete("/api/architectures/:id", (req, res) => {
   const { id } = req.params;
 
@@ -100,6 +99,7 @@ app.delete("/api/architectures/:id", (req, res) => {
   });
 });
 
+// Get one architecture
 app.get("/api/architectures/:id", (req, res) => {
   const { id } = req.params;
 
@@ -128,6 +128,7 @@ app.get("/api/architectures/:id", (req, res) => {
   });
 });
 
+// Load architecture editor
 app.get("/api/architectures/:id/editor", (req, res) => {
   const architectureId = req.params.id;
 
@@ -145,6 +146,8 @@ app.get("/api/architectures/:id/editor", (req, res) => {
 
   db.query(nodesSql, [architectureId], (error, nodeResults) => {
     if (error) {
+      console.error("Failed to load nodes:", error);
+
       return res.status(500).json({
         error: "Failed to load nodes",
       });
@@ -152,6 +155,8 @@ app.get("/api/architectures/:id/editor", (req, res) => {
 
     db.query(edgesSql, [architectureId], (error, edgeResults) => {
       if (error) {
+        console.error("Failed to load connections:", error);
+
         return res.status(500).json({
           error: "Failed to load connections",
         });
@@ -168,8 +173,13 @@ app.get("/api/architectures/:id/editor", (req, res) => {
         },
 
         data: {
-          label: node.component_type,
+          label: node.label || node.component_type,
           componentType: node.component_type,
+
+          provider: node.provider,
+          region: node.region,
+          capacity: node.capacity,
+          status: node.status,
         },
       }));
 
@@ -187,6 +197,7 @@ app.get("/api/architectures/:id/editor", (req, res) => {
   });
 });
 
+// Save architecture editor
 app.put("/api/architectures/:id/editor", (req, res) => {
   const architectureId = req.params.id;
   const { nodes, edges } = req.body;
@@ -203,6 +214,8 @@ app.put("/api/architectures/:id/editor", (req, res) => {
 
   db.query(deleteEdgesSql, [architectureId], (error) => {
     if (error) {
+      console.error("Failed to delete old connections:", error);
+
       return res.status(500).json({
         error: "Failed to save architecture",
       });
@@ -210,6 +223,8 @@ app.put("/api/architectures/:id/editor", (req, res) => {
 
     db.query(deleteNodesSql, [architectureId], (error) => {
       if (error) {
+        console.error("Failed to delete old nodes:", error);
+
         return res.status(500).json({
           error: "Failed to save architecture",
         });
@@ -219,8 +234,19 @@ app.put("/api/architectures/:id/editor", (req, res) => {
         return new Promise((resolve, reject) => {
           const sql = `
             INSERT INTO nodes
-            (id, architecture_id, component_type, position_x, position_y)
-            VALUES (?, ?, ?, ?, ?)
+            (
+              id,
+              architecture_id,
+              component_type,
+              label,
+              position_x,
+              position_y,
+              provider,
+              region,
+              capacity,
+              status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
 
           db.query(
@@ -228,9 +254,17 @@ app.put("/api/architectures/:id/editor", (req, res) => {
             [
               node.id,
               architectureId,
+
+              node.data.componentType,
               node.data.label,
+
               node.position.x,
               node.position.y,
+
+              node.data.provider || "AWS",
+              node.data.region || "us-east-1",
+              node.data.capacity || 500,
+              node.data.status || "Healthy",
             ],
             (error) => {
               if (error) {
@@ -249,7 +283,12 @@ app.put("/api/architectures/:id/editor", (req, res) => {
             return new Promise((resolve, reject) => {
               const sql = `
                 INSERT INTO connections
-                (id, architecture_id, source_node_id, target_node_id)
+                (
+                  id,
+                  architecture_id,
+                  source_node_id,
+                  target_node_id
+                )
                 VALUES (?, ?, ?, ?)
               `;
 
@@ -280,7 +319,7 @@ app.put("/api/architectures/:id/editor", (req, res) => {
           });
         })
         .catch((error) => {
-          console.error(error);
+          console.error("Failed to save architecture:", error);
 
           res.status(500).json({
             error: "Failed to save architecture",
@@ -289,6 +328,8 @@ app.put("/api/architectures/:id/editor", (req, res) => {
     });
   });
 });
+
+const PORT = 5000;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
