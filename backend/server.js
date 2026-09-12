@@ -73,6 +73,33 @@ app.post("/api/architectures", (req, res) => {
 
 const PORT = 5000;
 
+app.delete("/api/architectures/:id", (req, res) => {
+  const { id } = req.params;
+
+  const sql = `
+    DELETE FROM architectures
+    WHERE id = ?
+  `;
+
+  db.query(sql, [id], (error, result) => {
+    if (error) {
+      console.error("Failed to delete architecture:", error);
+
+      return res.status(500).json({
+        error: "Failed to delete architecture",
+      });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({
+        error: "Architecture not found",
+      });
+    }
+
+    res.status(204).send();
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });

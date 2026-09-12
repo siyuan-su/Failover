@@ -43,4 +43,8 @@ li {
   margin-bottom: 12px;
   border: 1px solid #ccc;
   border-radius: 8px;
+
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
