@@ -21,7 +21,7 @@ app.get("/api/architectures", (req, res) => {
   const sql = `
     SELECT id, name, status, created_at
     FROM architectures
-    ORDER BY created_at DESC
+    ORDER BY id ASC
   `;
 
   db.query(sql, (error, results) => {
@@ -97,6 +97,34 @@ app.delete("/api/architectures/:id", (req, res) => {
     }
 
     res.status(204).send();
+  });
+});
+
+app.get("/api/architectures/:id", (req, res) => {
+  const { id } = req.params;
+
+  const sql = `
+    SELECT id, name, status, created_at
+    FROM architectures
+    WHERE id = ?
+  `;
+
+  db.query(sql, [id], (error, results) => {
+    if (error) {
+      console.error("Failed to retrieve architecture:", error);
+
+      return res.status(500).json({
+        error: "Failed to retrieve architecture",
+      });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        error: "Architecture not found",
+      });
+    }
+
+    res.json(results[0]);
   });
 });
 

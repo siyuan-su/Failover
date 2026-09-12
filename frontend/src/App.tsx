@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link, Route, Routes, useParams } from "react-router-dom";
 import "./App.css";
 
 type Architecture = {
@@ -7,11 +8,10 @@ type Architecture = {
   status: string;
 };
 
-function App() {
+function Dashboard() {
   const [architectures, setArchitectures] = useState<Architecture[]>([]);
   const [newArchitectureName, setNewArchitectureName] = useState("");
 
-  // Load architectures from the backend
   async function loadArchitectures() {
     const response = await fetch(
       "http://localhost:5000/api/architectures"
@@ -22,7 +22,6 @@ function App() {
     setArchitectures(data);
   }
 
-  // Create a new architecture
   async function createArchitecture() {
     if (newArchitectureName.trim() === "") {
       return;
@@ -49,11 +48,9 @@ function App() {
     const newArchitecture = await response.json();
 
     setArchitectures([...architectures, newArchitecture]);
-
     setNewArchitectureName("");
   }
 
-  // Delete an architecture
   async function deleteArchitecture(id: number) {
     const response = await fetch(
       `http://localhost:5000/api/architectures/${id}`,
@@ -74,7 +71,6 @@ function App() {
     );
   }
 
-  // Load architectures when the page first opens
   useEffect(() => {
     loadArchitectures();
   }, []);
@@ -105,24 +101,77 @@ function App() {
       </div>
 
       <ul>
-        {architectures.map((architecture) => (
+        {architectures.map((architecture, index) => (
           <li key={architecture.id}>
             <div>
-              <strong>{architecture.name}</strong>
+              <span>Architecture {index + 1}: </span>
+
+              <Link to={`/architecture/${architecture.id}`}>
+                <strong>{architecture.name}</strong>
+              </Link>
+
               <span> — {architecture.status}</span>
             </div>
 
-            <button
-              onClick={() =>
-                deleteArchitecture(architecture.id)
-              }
-            >
+            <button onClick={() => deleteArchitecture(architecture.id)}>
               Delete
             </button>
           </li>
         ))}
       </ul>
     </main>
+  );
+}
+
+function ArchitecturePage() {
+  const { id } = useParams();
+
+  const [architecture, setArchitecture] =
+    useState<Architecture | null>(null);
+
+  useEffect(() => {
+    async function loadArchitecture() {
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}`
+      );
+
+      if (!response.ok) {
+        console.error("Failed to load architecture");
+        return;
+      }
+
+      const data = await response.json();
+
+      setArchitecture(data);
+    }
+
+    loadArchitecture();
+  }, [id]);
+
+  if (!architecture) {
+    return <p>Loading...</p>;
+  }
+
+  return (
+    <main>
+      <Link to="/">← Back</Link>
+
+      <h1>{architecture.name}</h1>
+
+      <p>This will become the visual architecture editor.</p>
+    </main>
+  );
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Dashboard />} />
+      <Route
+        path="/architecture/:id"
+        element={<ArchitecturePage />}
+      />
+    </Routes>
   );
 }
 
