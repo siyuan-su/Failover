@@ -128,6 +128,168 @@ app.get("/api/architectures/:id", (req, res) => {
   });
 });
 
+app.get("/api/architectures/:id/editor", (req, res) => {
+  const architectureId = req.params.id;
+
+  const nodesSql = `
+    SELECT *
+    FROM nodes
+    WHERE architecture_id = ?
+  `;
+
+  const edgesSql = `
+    SELECT *
+    FROM connections
+    WHERE architecture_id = ?
+  `;
+
+  db.query(nodesSql, [architectureId], (error, nodeResults) => {
+    if (error) {
+      return res.status(500).json({
+        error: "Failed to load nodes",
+      });
+    }
+
+    db.query(edgesSql, [architectureId], (error, edgeResults) => {
+      if (error) {
+        return res.status(500).json({
+          error: "Failed to load connections",
+        });
+      }
+
+      const nodes = nodeResults.map((node) => ({
+        id: node.id,
+
+        type: "cloudNode",
+
+        position: {
+          x: node.position_x,
+          y: node.position_y,
+        },
+
+        data: {
+          label: node.component_type,
+          componentType: node.component_type,
+        },
+      }));
+
+      const edges = edgeResults.map((edge) => ({
+        id: edge.id,
+        source: edge.source_node_id,
+        target: edge.target_node_id,
+      }));
+
+      res.json({
+        nodes,
+        edges,
+      });
+    });
+  });
+});
+
+app.put("/api/architectures/:id/editor", (req, res) => {
+  const architectureId = req.params.id;
+  const { nodes, edges } = req.body;
+
+  const deleteEdgesSql = `
+    DELETE FROM connections
+    WHERE architecture_id = ?
+  `;
+
+  const deleteNodesSql = `
+    DELETE FROM nodes
+    WHERE architecture_id = ?
+  `;
+
+  db.query(deleteEdgesSql, [architectureId], (error) => {
+    if (error) {
+      return res.status(500).json({
+        error: "Failed to save architecture",
+      });
+    }
+
+    db.query(deleteNodesSql, [architectureId], (error) => {
+      if (error) {
+        return res.status(500).json({
+          error: "Failed to save architecture",
+        });
+      }
+
+      const nodePromises = nodes.map((node) => {
+        return new Promise((resolve, reject) => {
+          const sql = `
+            INSERT INTO nodes
+            (id, architecture_id, component_type, position_x, position_y)
+            VALUES (?, ?, ?, ?, ?)
+          `;
+
+          db.query(
+            sql,
+            [
+              node.id,
+              architectureId,
+              node.data.label,
+              node.position.x,
+              node.position.y,
+            ],
+            (error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            }
+          );
+        });
+      });
+
+      Promise.all(nodePromises)
+        .then(() => {
+          const edgePromises = edges.map((edge) => {
+            return new Promise((resolve, reject) => {
+              const sql = `
+                INSERT INTO connections
+                (id, architecture_id, source_node_id, target_node_id)
+                VALUES (?, ?, ?, ?)
+              `;
+
+              db.query(
+                sql,
+                [
+                  edge.id,
+                  architectureId,
+                  edge.source,
+                  edge.target,
+                ],
+                (error) => {
+                  if (error) {
+                    reject(error);
+                  } else {
+                    resolve();
+                  }
+                }
+              );
+            });
+          });
+
+          return Promise.all(edgePromises);
+        })
+        .then(() => {
+          res.json({
+            message: "Architecture saved",
+          });
+        })
+        .catch((error) => {
+          console.error(error);
+
+          res.status(500).json({
+            error: "Failed to save architecture",
+          });
+        });
+    });
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
