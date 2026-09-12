@@ -11,49 +11,68 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Test route
 app.get("/", (req, res) => {
   res.send("Failover backend is running");
 });
 
-const PORT = 5000;
-
-const architectures = [
-  {
-    id: 1,
-    name: "Black Friday Architecture",
-    status: "Ready",
-  },
-  {
-    id: 2,
-    name: "Multi-Region Failover Test",
-    status: "Ready",
-  },
-];
-
+// Get all architectures
 app.get("/api/architectures", (req, res) => {
-  res.json(architectures);
+  const sql = `
+    SELECT id, name, status, created_at
+    FROM architectures
+    ORDER BY created_at DESC
+  `;
+
+  db.query(sql, (error, results) => {
+    if (error) {
+      console.error("Failed to retrieve architectures:", error);
+
+      return res.status(500).json({
+        error: "Failed to retrieve architectures",
+      });
+    }
+
+    res.json(results);
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
+// Create an architecture
 app.post("/api/architectures", (req, res) => {
   const { name } = req.body;
 
-  if (!name || name.trim() == "") {
+  if (!name || name.trim() === "") {
     return res.status(400).json({
       error: "Architecture name is required",
     });
   }
 
-  const newArchitecture = {
-    id: Date.now(),
-    name: name.trim(),
-    status: "Ready",
-  };
+  const sql = `
+    INSERT INTO architectures (name)
+    VALUES (?)
+  `;
 
-  architectures.push(newArchitecture);
+  db.query(sql, [name.trim()], (error, result) => {
+    if (error) {
+      console.error("Failed to create architecture:", error);
 
-  res.status(201).json(newArchitecture);
+      return res.status(500).json({
+        error: "Failed to create architecture",
+      });
+    }
+
+    const newArchitecture = {
+      id: result.insertId,
+      name: name.trim(),
+      status: "Ready",
+    };
+
+    res.status(201).json(newArchitecture);
+  });
+});
+
+const PORT = 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
