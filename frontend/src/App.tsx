@@ -228,6 +228,21 @@ function ArchitectureEditor() {
     loadEditor();
   }, [id]);
 
+  async function previewRuntime() {
+    const response = await fetch(
+      `http://localhost:5000/api/architectures/${id}/runtime-spec`
+    );
+
+    if (!response.ok) {
+      console.error("Failed to build runtime specification");
+      return;
+    }
+
+    const data = await response.json();
+
+    console.log("Runtime specification:", data);
+  }
+
   async function loadEditor() {
     const response = await fetch(
       `http://localhost:5000/api/architectures/${id}/editor`
@@ -394,6 +409,10 @@ function ArchitectureEditor() {
 
         <button onClick={saveEditor}>
           Save Architecture
+        </button>
+
+        <button onClick={previewRuntime}>
+          Preview Runtime
         </button>
 
         {selectedNodeId && !locked && (

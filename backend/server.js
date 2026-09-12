@@ -8,6 +8,28 @@ const db = require("./db");
 
 const app = express();
 
+function normalizeComponentType(componentType) {
+  switch (componentType) {
+    case "API Server":
+      return "api-server";
+
+    case "Load Balancer":
+      return "load-balancer";
+
+    case "MySQL Database":
+      return "mysql";
+
+    case "Redis Cache":
+      return "redis";
+
+    case "Worker":
+      return "worker";
+
+    default:
+      return "unknown";
+  }
+}
+
 app.use(cors());
 app.use(express.json());
 
@@ -325,6 +347,72 @@ app.put("/api/architectures/:id/editor", (req, res) => {
             error: "Failed to save architecture",
           });
         });
+    });
+  });
+});
+
+app.get("/api/architectures/:id/runtime-spec", (req, res) => {
+  const architectureId = req.params.id;
+
+  const nodesSql = `
+    SELECT
+      id,
+      component_type,
+      label,
+      provider,
+      region,
+      capacity,
+      status
+    FROM nodes
+    WHERE architecture_id = ?
+  `;
+
+  const edgesSql = `
+    SELECT
+      source_node_id,
+      target_node_id
+    FROM connections
+    WHERE architecture_id = ?
+  `;
+
+  db.query(nodesSql, [architectureId], (error, nodeResults) => {
+    if (error) {
+      console.error("Failed to load runtime nodes:", error);
+
+      return res.status(500).json({
+        error: "Failed to build runtime specification",
+      });
+    }
+
+    db.query(edgesSql, [architectureId], (error, edgeResults) => {
+      if (error) {
+        console.error("Failed to load runtime connections:", error);
+
+        return res.status(500).json({
+          error: "Failed to build runtime specification",
+        });
+      }
+
+      const services = nodeResults.map((node) => ({
+        id: node.id,
+        name: node.label || node.component_type,
+        type: normalizeComponentType(node.component_type),
+        provider: node.provider,
+        region: node.region,
+        capacity: node.capacity,
+        status: node.status,
+      }));
+
+      const connections = edgeResults.map((edge) => ({
+        source: edge.source_node_id,
+        target: edge.target_node_id,
+      }));
+
+      res.json({
+        architectureId: Number(architectureId),
+        services,
+        connections,
+      });
     });
   });
 });
