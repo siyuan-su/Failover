@@ -191,6 +191,34 @@ async function runDockerApiContainer(
   };
 }
 
+async function getContainerStatus(containerName) {
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "inspect",
+      "-f",
+      "{{.State.Status}}",
+      containerName,
+    ]);
+
+    return stdout.trim();
+  } catch {
+    return "missing";
+  }
+}
+
+function getRuntimeContainerName(
+  architectureId,
+  nodeId
+) {
+  const shortId = nodeId
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 8);
+
+  return sanitizeDockerName(
+    `failover-${architectureId}-${shortId}`
+  );
+}
+
 function sanitizeDockerName(value) {
   return value
     .toLowerCase()
@@ -903,6 +931,73 @@ app.get("/api/architectures/:id/runtime-spec", (req, res) => {
   });
 });
 
+app.get(
+  "/api/architectures/:id/runtime-status",
+  async (req, res) => {
+    const architectureId =
+      req.params.id;
+
+    try {
+      const nodes =
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      const services = [];
+
+      for (const node of nodes) {
+        const containerName =
+          getRuntimeContainerName(
+            architectureId,
+            node.id
+          );
+
+        const dockerStatus =
+          await getContainerStatus(
+            containerName
+          );
+
+        let status = "Not Deployed";
+
+        if (dockerStatus === "running") {
+          status = "Running";
+        }
+
+        if (
+          dockerStatus === "exited" ||
+          dockerStatus === "dead"
+        ) {
+          status = "Failed";
+        }
+
+        services.push({
+          nodeId: node.id,
+          containerName,
+          dockerStatus,
+          status,
+        });
+      }
+
+      res.json({
+        architectureId:
+          Number(architectureId),
+
+        services,
+      });
+    } catch (error) {
+      console.error(
+        "Failed to retrieve runtime status:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to retrieve runtime status",
+      });
+    }
+  }
+);
+
 app.post(
   "/api/architectures/:id/deploy-local",
   async (req, res) => {
@@ -1139,6 +1234,84 @@ app.post(
       res.status(500).json({
         error:
           "Architecture deployment failed",
+        details: error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/runtime/:nodeId/stop",
+  async (req, res) => {
+    const {
+      id: architectureId,
+      nodeId,
+    } = req.params;
+
+    const containerName =
+      getRuntimeContainerName(
+        architectureId,
+        nodeId
+      );
+
+    try {
+      await execFileAsync("docker", [
+        "stop",
+        containerName,
+      ]);
+
+      res.json({
+        nodeId,
+        containerName,
+        status: "Failed",
+      });
+    } catch (error) {
+      console.error(
+        "Failed to stop container:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Failed to stop service",
+        details: error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/runtime/:nodeId/restart",
+  async (req, res) => {
+    const {
+      id: architectureId,
+      nodeId,
+    } = req.params;
+
+    const containerName =
+      getRuntimeContainerName(
+        architectureId,
+        nodeId
+      );
+
+    try {
+      await execFileAsync("docker", [
+        "restart",
+        containerName,
+      ]);
+
+      res.json({
+        nodeId,
+        containerName,
+        status: "Recovering",
+      });
+    } catch (error) {
+      console.error(
+        "Failed to restart container:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Failed to restart service",
         details: error.message,
       });
     }

@@ -248,6 +248,13 @@ type RuntimePreview = {
   connections: RuntimeConnection[];
 };
 
+type RuntimeStatus = {
+  nodeId: string;
+  containerName: string;
+  dockerStatus: string;
+  status: string;
+};
+
 function ArchitectureEditor() {
   const { id } = useParams();
 
@@ -299,6 +306,9 @@ function ArchitectureEditor() {
   const [loadingRuntimePreview, setLoadingRuntimePreview] =
     useState(false);
 
+  const [runtimeStatuses, setRuntimeStatuses] =
+    useState<RuntimeStatus[]>([]);
+
   useEffect(() => {
     async function loadArchitecture() {
       const response = await fetch(
@@ -318,6 +328,26 @@ function ArchitectureEditor() {
     loadArchitecture();
     loadEditor();
   }, [id]);
+
+  useEffect(() => {
+    if (!architectureDeployment) {
+      return;
+    }
+
+    loadRuntimeStatus();
+
+    const interval = setInterval(
+      loadRuntimeStatus,
+      2000
+    );
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [
+    architectureDeployment,
+    id,
+  ]);
 
   function getRuntimeService(
     serviceId: string
@@ -349,55 +379,121 @@ function ArchitectureEditor() {
     }
   }
 
-  async function deployLocally(nodeId: string) {
-    console.log("1. Deploy clicked:", nodeId);
+  async function restartRuntimeService(
+    nodeId: string
+  ) {
+    await fetch(
+      `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/restart`,
+      {
+        method: "POST",
+      }
+    );
 
+    await loadRuntimeStatus();
+  }
+
+  async function stopRuntimeService(
+    nodeId: string
+  ) {
+    await fetch(
+      `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/stop`,
+      {
+        method: "POST",
+      }
+    );
+
+    await loadRuntimeStatus();
+  }
+
+  async function loadRuntimeStatus() {
+  try {
+    const response = await fetch(
+      `http://localhost:5000/api/architectures/${id}/runtime-status`
+    );
+
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+
+    setRuntimeStatuses(
+      data.services
+    );
+  } catch (error) {
+    console.error(
+      "Failed to load runtime status:",
+      error
+    );
+  }
+}
+
+  async function deployLocally(nodeId: string) {
     setDeployedNodeId(nodeId);
     setDeploying(true);
     setDeploymentResult(null);
 
     try {
-      console.log("2. Saving editor");
-
       await saveEditor();
 
-      console.log("3. Editor saved");
-
       const response = await fetch(
-        `http://localhost:5000/api/architectures/${id}/deploy-local`,
+        `http://localhost:5000/api/architectures/${id}/deploy-local-all`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            nodeId,
-          }),
         }
       );
 
-      console.log("4. Backend responded:", response.status);
-
       const data = await response.json();
 
-      console.log("5. Deployment result:", data);
-
       if (!response.ok) {
-        setDeploymentResult({
-          error: data.error || "Local deployment failed",
-        });
-
-        return;
+        throw new Error(
+          data.error || "Local deployment failed"
+        );
       }
 
-      setDeploymentResult(data);
+      const nodeDeployment =
+        data.deployments.find(
+          (deployment: {
+            nodeId: string;
+          }) =>
+            deployment.nodeId === nodeId
+        );
 
-      console.log("6. Deployment state updated");
-    } catch (error) {
-      console.error("DEPLOY ERROR:", error);
+      if (!nodeDeployment) {
+        throw new Error(
+          "Deployment result not found for component"
+        );
+      }
 
       setDeploymentResult({
-        error: "Could not deploy component",
+        deployment: {
+          nodeId: nodeDeployment.nodeId,
+          containerName:
+            nodeDeployment.containerName,
+          serviceName:
+            nodeDeployment.serviceName,
+          hostPort:
+            nodeDeployment.hostPort,
+          status:
+            nodeDeployment.status,
+
+          health:
+            nodeDeployment.health,
+        },
+      });
+
+      setArchitectureDeployment(data);
+    } catch (error) {
+      console.error(
+        "Local deployment failed:",
+        error
+      );
+
+      setDeploymentResult({
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not deploy component",
       });
     } finally {
       setDeploying(false);
@@ -650,6 +746,18 @@ function ArchitectureEditor() {
       onUpdate: updateNode,
       onDelete: deleteComponent,
       onDeploy: deployLocally,
+
+      runtimeStatus:
+        runtimeStatuses.find(
+          (runtime) =>
+            runtime.nodeId === node.id
+        ) || null,
+
+      onStopRuntime:
+        stopRuntimeService,
+
+      onRestartRuntime:
+        restartRuntimeService,
 
       deploying:
         deploying &&

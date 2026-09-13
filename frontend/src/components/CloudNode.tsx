@@ -2,6 +2,7 @@ import {
   Handle,
   Position,
   NodeToolbar,
+  useViewport,
   type NodeProps,
 } from "@xyflow/react";
 
@@ -38,15 +39,30 @@ type CloudNodeData = {
   deploying?: boolean;
 
   deployment?: {
-  error?: string;
+    error?: string;
 
-  deployment?: {
+    deployment?: {
+      containerName: string;
+      serviceName: string;
+      hostPort: number;
+      status: string;
+    };
+  };
+
+  runtimeStatus?: {
+    nodeId: string;
     containerName: string;
-    serviceName: string;
-    hostPort: number;
+    dockerStatus: string;
     status: string;
   };
-};
+
+  onStopRuntime?: (
+    nodeId: string
+  ) => void;
+
+  onRestartRuntime?: (
+    nodeId: string
+  ) => void;
 };
 
 function getIcon(componentType: string) {
@@ -80,13 +96,20 @@ export default function CloudNode({
   selected,
 }: NodeProps) {
   const nodeData = data as CloudNodeData;
+  const { zoom } = useViewport();
 
   return (
     <div className="cloud-node">
-      <NodeToolbar
-        isVisible={selected}
-        position={Position.Right}
-        offset={18}
+     <NodeToolbar
+      isVisible={selected}
+      position={Position.Right}
+      offset={14}
+    >
+      <div
+        className="node-toolbar-scale"
+        style={{
+          zoom: zoom,
+        }}
       >
         <div className="node-toolbar-row">
           <div className="node-popup">
@@ -212,6 +235,28 @@ export default function CloudNode({
               >
                 Delete
               </button>
+              {nodeData.runtimeStatus?.status ===
+                "Running" && (
+                <button
+                  className="simulate-failure-button"
+                  onClick={() =>
+                    nodeData.onStopRuntime?.(id)
+                  }
+                >
+                  Simulate Failure
+                </button>
+              )}
+              {nodeData.runtimeStatus?.status ===
+                "Failed" && (
+                <button
+                  className="recover-service-button"
+                  onClick={() =>
+                    nodeData.onRestartRuntime?.(id)
+                  }
+                >
+                  Recover Service
+                </button>
+              )}
             </div>
           </div>
 
@@ -286,6 +331,7 @@ export default function CloudNode({
               )}
             </div>
           )}
+            </div>
         </div>
       </NodeToolbar>
       {/* TOP */}
