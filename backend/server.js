@@ -13,6 +13,8 @@ const db = require("./db");
 
 const app = express();
 
+const crypto = require("crypto");
+
 function normalizeComponentType(componentType) {
   switch (componentType) {
     case "API Server":
@@ -135,6 +137,221 @@ async function runDockerApiContainer(
   };
 }
 
+function sanitizeDockerName(value) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+async function removeContainerIfExists(containerName) {
+  try {
+    await execFileAsync("docker", [
+      "rm",
+      "-f",
+      containerName,
+    ]);
+  } catch {
+    // Container did not exist. That's fine.
+  }
+}
+
+async function ensureDockerNetwork(architectureId) {
+  const networkName =
+    `failover-${architectureId}-network`;
+
+  try {
+    await execFileAsync("docker", [
+      "network",
+      "inspect",
+      networkName,
+    ]);
+  } catch {
+    await execFileAsync("docker", [
+      "network",
+      "create",
+      networkName,
+    ]);
+  }
+
+  return networkName;
+}
+
+async function getPublishedPort(
+  containerName,
+  containerPort
+) {
+  const { stdout } = await execFileAsync(
+    "docker",
+    [
+      "port",
+      containerName,
+      `${containerPort}/tcp`,
+    ]
+  );
+
+  const match = stdout.trim().match(/:(\d+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return Number(match[1]);
+}
+
+async function deployNodeLocally(
+  architectureId,
+  node,
+  networkName
+) {
+  const shortId = node.id
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 8);
+
+  const containerName = sanitizeDockerName(
+    `failover-${architectureId}-${shortId}`
+  );
+
+  const serviceName =
+    node.label || node.component_type;
+
+  await removeContainerIfExists(containerName);
+
+  // API SERVER
+
+  if (node.component_type === "API Server") {
+    await execFileAsync("docker", [
+      "run",
+      "-d",
+
+      "--name",
+      containerName,
+
+      "--network",
+      networkName,
+
+      "--network-alias",
+      sanitizeDockerName(serviceName),
+
+      "-p",
+      "127.0.0.1::3000",
+
+      "-e",
+      `SERVICE_NAME=${serviceName}`,
+
+      "-e",
+      `CAPACITY=${node.capacity || 500}`,
+
+      "failover-api-server",
+    ]);
+
+    const hostPort = await getPublishedPort(
+      containerName,
+      3000
+    );
+
+    return {
+      nodeId: node.id,
+      type: node.component_type,
+      serviceName,
+      containerName,
+      hostPort,
+      status: "Starting",
+    };
+  }
+
+  // MYSQL
+
+  if (node.component_type === "MySQL Database") {
+    const mysqlPassword =
+      crypto.randomBytes(12).toString("hex");
+
+    await execFileAsync("docker", [
+      "run",
+      "-d",
+
+      "--name",
+      containerName,
+
+      "--network",
+      networkName,
+
+      "--network-alias",
+      sanitizeDockerName(serviceName),
+
+      "-p",
+      "127.0.0.1::3306",
+
+      "-e",
+      `MYSQL_ROOT_PASSWORD=${mysqlPassword}`,
+
+      "-e",
+      "MYSQL_DATABASE=failover_runtime",
+
+      "mysql:8.4",
+    ]);
+
+    const hostPort = await getPublishedPort(
+      containerName,
+      3306
+    );
+
+    return {
+      nodeId: node.id,
+      type: node.component_type,
+      serviceName,
+      containerName,
+      hostPort,
+      status: "Starting",
+    };
+  }
+
+  // REDIS
+
+  if (node.component_type === "Redis Cache") {
+    await execFileAsync("docker", [
+      "run",
+      "-d",
+
+      "--name",
+      containerName,
+
+      "--network",
+      networkName,
+
+      "--network-alias",
+      sanitizeDockerName(serviceName),
+
+      "-p",
+      "127.0.0.1::6379",
+
+      "redis:7-alpine",
+    ]);
+
+    const hostPort = await getPublishedPort(
+      containerName,
+      6379
+    );
+
+    return {
+      nodeId: node.id,
+      type: node.component_type,
+      serviceName,
+      containerName,
+      hostPort,
+      status: "Starting",
+    };
+  }
+
+  return {
+    nodeId: node.id,
+    type: node.component_type,
+    serviceName,
+    status: "Unsupported",
+  };
+}
+
 async function waitForHealthyService(
   hostPort,
   attempts = 10
@@ -160,6 +377,43 @@ async function waitForHealthyService(
   throw new Error(
     `Service on port ${hostPort} failed its health check`
   );
+}
+
+async function determineDeploymentStatus(
+  deployment
+) {
+  if (deployment.status === "Unsupported") {
+    return deployment;
+  }
+
+  if (
+    deployment.type === "API Server" &&
+    deployment.hostPort
+  ) {
+    try {
+      const health =
+        await waitForHealthyService(
+          deployment.hostPort
+        );
+
+      return {
+        ...deployment,
+        status: "Healthy",
+        health,
+      };
+    } catch (error) {
+      return {
+        ...deployment,
+        status: "Unhealthy",
+        error: error.message,
+      };
+    }
+  }
+
+  return {
+    ...deployment,
+    status: "Running",
+  };
 }
 
 // Test route
@@ -338,6 +592,9 @@ app.get("/api/architectures/:id/editor", (req, res) => {
         id: edge.id,
         source: edge.source_node_id,
         target: edge.target_node_id,
+        sourceHandle: edge.source_handle || undefined,
+        targetHandle: edge.target_handle || undefined,
+        type: "step",
       }));
 
       res.json({
@@ -438,9 +695,11 @@ app.put("/api/architectures/:id/editor", (req, res) => {
                   id,
                   architecture_id,
                   source_node_id,
-                  target_node_id
+                  target_node_id,
+                  source_handle,
+                  target_handle
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
               `;
 
               db.query(
@@ -450,6 +709,8 @@ app.put("/api/architectures/:id/editor", (req, res) => {
                   architectureId,
                   edge.source,
                   edge.target,
+                  edge.sourceHandle || null,
+                  edge.targetHandle || null,
                 ],
                 (error) => {
                   if (error) {
@@ -619,6 +880,91 @@ app.post(
 
       res.status(500).json({
         error: "Local deployment failed",
+        details: error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/deploy-local-all",
+  async (req, res) => {
+    const architectureId = req.params.id;
+
+    try {
+      const nodes =
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      if (nodes.length === 0) {
+        return res.status(400).json({
+          error:
+            "Architecture has no components to deploy",
+        });
+      }
+
+      const networkName =
+        await ensureDockerNetwork(
+          architectureId
+        );
+
+      const deployments = [];
+
+      for (const node of nodes) {
+        try {
+          const deployment =
+            await deployNodeLocally(
+              architectureId,
+              node,
+              networkName
+            );
+
+          const checkedDeployment =
+            await determineDeploymentStatus(
+              deployment
+            );
+
+          deployments.push(
+            checkedDeployment
+          );
+        } catch (error) {
+          console.error(
+            `Failed to deploy ${node.label}:`,
+            error
+          );
+
+          deployments.push({
+            nodeId: node.id,
+            type: node.component_type,
+            serviceName:
+              node.label ||
+              node.component_type,
+            status: "Failed",
+            error: error.message,
+          });
+        }
+      }
+
+      res.json({
+        architectureId:
+          Number(architectureId),
+
+        networkName,
+
+        status: "Deployed",
+
+        deployments,
+      });
+    } catch (error) {
+      console.error(
+        "Architecture deployment failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Architecture deployment failed",
         details: error.message,
       });
     }

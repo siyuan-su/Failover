@@ -288,9 +288,35 @@ export default function CloudNode({
           )}
         </div>
       </NodeToolbar>
+      {/* TOP */}
       <Handle
-        type="target"
+        id="top"
+        type="source"
         position={Position.Top}
+        className="cloud-handle"
+      />
+
+      {/* RIGHT */}
+      <Handle
+        id="right"
+        type="source"
+        position={Position.Right}
+        className="cloud-handle"
+      />
+
+      {/* BOTTOM */}
+      <Handle
+        id="bottom"
+        type="source"
+        position={Position.Bottom}
+        className="cloud-handle"
+      />
+
+      {/* LEFT */}
+      <Handle
+        id="left"
+        type="source"
+        position={Position.Left}
         className="cloud-handle"
       />
 
@@ -305,12 +331,6 @@ export default function CloudNode({
           {nodeData.label}
         </div>
       </div>
-
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        className="cloud-handle"
-      />
 
       <div className="cloud-node-tooltip">
         <div className="tooltip-title">

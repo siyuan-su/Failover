@@ -4,6 +4,8 @@ import {
   Background,
   Controls,
   ControlButton,
+  ConnectionMode,
+  ConnectionLineType,
   addEdge,
   useEdgesState,
   useNodesState,
@@ -209,6 +211,22 @@ type DeploymentResult = {
   };
 };
 
+type ArchitectureDeployment = {
+  architectureId: number;
+  networkName: string;
+  status: string;
+
+  deployments: {
+    nodeId: string;
+    type: string;
+    serviceName: string;
+    containerName?: string;
+    hostPort?: number;
+    status: string;
+    error?: string;
+  }[];
+};
+
 function ArchitectureEditor() {
   const { id } = useParams();
 
@@ -221,7 +239,10 @@ function ArchitectureEditor() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const {
+    screenToFlowPosition,
+    deleteElements,
+  } = useReactFlow();
 
   const [locked, setLocked] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -234,6 +255,19 @@ function ArchitectureEditor() {
 
   const [deploying, setDeploying] =
     useState(false);
+
+  const [
+    architectureDeployment,
+    setArchitectureDeployment,
+  ] =
+    useState<ArchitectureDeployment | null>(
+      null
+    );
+
+  const [
+    deployingArchitecture,
+    setDeployingArchitecture,
+  ] = useState(false);
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -255,60 +289,99 @@ function ArchitectureEditor() {
     loadEditor();
   }, [id]);
 
-async function deployLocally(nodeId: string) {
-  console.log("1. Deploy clicked:", nodeId);
+  async function deployLocally(nodeId: string) {
+    console.log("1. Deploy clicked:", nodeId);
 
-  setDeployedNodeId(nodeId);
-  setDeploying(true);
-  setDeploymentResult(null);
+    setDeployedNodeId(nodeId);
+    setDeploying(true);
+    setDeploymentResult(null);
 
-  try {
-    console.log("2. Saving editor");
+    try {
+      console.log("2. Saving editor");
 
-    await saveEditor();
+      await saveEditor();
 
-    console.log("3. Editor saved");
+      console.log("3. Editor saved");
 
-    const response = await fetch(
-      `http://localhost:5000/api/architectures/${id}/deploy-local`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          nodeId,
-        }),
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/deploy-local`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nodeId,
+          }),
+        }
+      );
+
+      console.log("4. Backend responded:", response.status);
+
+      const data = await response.json();
+
+      console.log("5. Deployment result:", data);
+
+      if (!response.ok) {
+        setDeploymentResult({
+          error: data.error || "Local deployment failed",
+        });
+
+        return;
       }
-    );
 
-    console.log("4. Backend responded:", response.status);
+      setDeploymentResult(data);
 
-    const data = await response.json();
+      console.log("6. Deployment state updated");
+    } catch (error) {
+      console.error("DEPLOY ERROR:", error);
 
-    console.log("5. Deployment result:", data);
-
-    if (!response.ok) {
       setDeploymentResult({
-        error: data.error || "Local deployment failed",
+        error: "Could not deploy component",
       });
-
-      return;
+    } finally {
+      setDeploying(false);
     }
-
-    setDeploymentResult(data);
-
-    console.log("6. Deployment state updated");
-  } catch (error) {
-    console.error("DEPLOY ERROR:", error);
-
-    setDeploymentResult({
-      error: "Could not deploy component",
-    });
-  } finally {
-    setDeploying(false);
   }
-}
+
+  async function deployArchitectureLocally() {
+    setDeployingArchitecture(true);
+    setArchitectureDeployment(null);
+
+    try {
+      await saveEditor();
+
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/deploy-local-all`,
+        {
+          method: "POST",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Architecture deployment failed"
+        );
+      }
+
+      setArchitectureDeployment(data);
+
+      console.log(
+        "Architecture deployed:",
+        data
+      );
+    } catch (error) {
+      console.error(
+        "Architecture deployment failed:",
+        error
+      );
+    } finally {
+      setDeployingArchitecture(false);
+    }
+  }
 
   async function previewRuntime() {
     const response = await fetch(
@@ -369,7 +442,13 @@ async function deployLocally(nodeId: string) {
 
   function onConnect(connection: Connection) {
     setEdges((currentEdges) =>
-      addEdge(connection, currentEdges)
+      addEdge(
+        {
+          ...connection,
+          type: "step",
+        },
+        currentEdges
+      )
     );
   }
 
@@ -437,20 +516,17 @@ async function deployLocally(nodeId: string) {
     event.dataTransfer.dropEffect = "move";
   }
 
-  function deleteComponent(nodeId: string) {
-    setNodes((currentNodes) =>
-      currentNodes.filter((node) => node.id !== nodeId)
-    );
-
-    setEdges((currentEdges) =>
-      currentEdges.filter(
-        (edge) =>
-          edge.source !== nodeId &&
-          edge.target !== nodeId
-      )
-    );
+  async function deleteComponent(nodeId: string) {
+    await deleteElements({
+      nodes: [{ id: nodeId }],
+    });
 
     setSelectedNodeId(null);
+
+    if (deployedNodeId === nodeId) {
+      setDeployedNodeId(null);
+      setDeploymentResult(null);
+    }
   }
 
   function updateNode(
@@ -506,6 +582,12 @@ async function deployLocally(nodeId: string) {
         deployedNodeId === node.id
           ? deploymentResult
           : null,
+
+      runtimeDeployment:
+        architectureDeployment?.deployments.find(
+          (deployment) =>
+            deployment.nodeId === node.id
+        ) || null,
     },
   }));
 
@@ -526,6 +608,16 @@ async function deployLocally(nodeId: string) {
 
         <button onClick={previewRuntime}>
           Preview Runtime
+        </button>
+
+        <button
+          className="deploy-architecture-button"
+          onClick={deployArchitectureLocally}
+          disabled={deployingArchitecture}
+        >
+          {deployingArchitecture
+            ? "Deploying Architecture..."
+            : "Deploy Architecture Locally"}
         </button>
 
         <p>Components</p>
@@ -589,6 +681,12 @@ async function deployLocally(nodeId: string) {
           nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          connectionMode={ConnectionMode.Loose}
+          connectionLineType={ConnectionLineType.Step}
+          
+          isValidConnection={(connection) =>
+            connection.source !== connection.target
+          }
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
@@ -598,8 +696,28 @@ async function deployLocally(nodeId: string) {
           onNodeClick={(_, node) => {
             setSelectedNodeId(node.id);
           }}
-          onNodesDelete={() => {
+          onNodesDelete={(deletedNodes) => {
+            const deletedIds = new Set(
+              deletedNodes.map((node) => node.id)
+            );
+
+            setEdges((currentEdges) =>
+              currentEdges.filter(
+                (edge) =>
+                  !deletedIds.has(edge.source) &&
+                  !deletedIds.has(edge.target)
+              )
+            );
+
             setSelectedNodeId(null);
+
+            if (
+              deployedNodeId &&
+              deletedIds.has(deployedNodeId)
+            ) {
+              setDeployedNodeId(null);
+              setDeploymentResult(null);
+            }
           }}
           onPaneClick={() => {
             setSelectedNodeId(null);
@@ -617,6 +735,14 @@ async function deployLocally(nodeId: string) {
             x: 0,
             y: 0,
             zoom: 1,
+          }}
+          defaultEdgeOptions={{
+            type: "step",
+
+            style: {
+              stroke: "#94a3b8",
+              strokeWidth: 2,
+            },
           }}
         >
           <Background
