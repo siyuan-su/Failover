@@ -1,4 +1,10 @@
-import { Handle, Position, type NodeProps } from "@xyflow/react";
+import {
+  Handle,
+  Position,
+  NodeToolbar,
+  type NodeProps,
+} from "@xyflow/react";
+
 import {
   Network,
   Server,
@@ -13,10 +19,34 @@ import "./CloudNode.css";
 type CloudNodeData = {
   label: string;
   componentType: string;
+
   provider?: string;
   region?: string;
   capacity?: number;
   status?: string;
+
+  onUpdate?: (
+    nodeId: string,
+    field: string,
+    value: string | number
+  ) => void;
+
+  onDelete?: (nodeId: string) => void;
+
+  onDeploy?: (nodeId: string) => void;
+
+  deploying?: boolean;
+
+  deployment?: {
+  error?: string;
+
+  deployment?: {
+    containerName: string;
+    serviceName: string;
+    hostPort: number;
+    status: string;
+  };
+};
 };
 
 function getIcon(componentType: string) {
@@ -44,11 +74,220 @@ function getIcon(componentType: string) {
   }
 }
 
-export default function CloudNode({ data }: NodeProps) {
+export default function CloudNode({
+  id,
+  data,
+  selected,
+}: NodeProps) {
   const nodeData = data as CloudNodeData;
 
   return (
     <div className="cloud-node">
+      <NodeToolbar
+        isVisible={selected}
+        position={Position.Right}
+        offset={18}
+      >
+        <div className="node-toolbar-row">
+          <div className="node-popup">
+            <div className="node-popup-header">
+              <strong>Component Settings</strong>
+            </div>
+
+            <label>
+              Name
+
+              <input
+                value={nodeData.label}
+                onChange={(event) =>
+                  nodeData.onUpdate?.(
+                    id,
+                    "label",
+                    event.target.value
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              Provider
+
+              <select
+                value={nodeData.provider || "AWS"}
+                onChange={(event) =>
+                  nodeData.onUpdate?.(
+                    id,
+                    "provider",
+                    event.target.value
+                  )
+                }
+              >
+                <option value="AWS">AWS</option>
+                <option value="Azure">Azure</option>
+              </select>
+            </label>
+
+            <label>
+              Region
+
+              <select
+                value={nodeData.region || "us-east-1"}
+                onChange={(event) =>
+                  nodeData.onUpdate?.(
+                    id,
+                    "region",
+                    event.target.value
+                  )
+                }
+              >
+                {nodeData.provider === "Azure" ? (
+                  <>
+                    <option value="canada-central">
+                      Canada Central
+                    </option>
+
+                    <option value="east-us">
+                      East US
+                    </option>
+
+                    <option value="west-europe">
+                      West Europe
+                    </option>
+                  </>
+                ) : (
+                  <>
+                    <option value="us-east-1">
+                      us-east-1
+                    </option>
+
+                    <option value="us-west-2">
+                      us-west-2
+                    </option>
+
+                    <option value="ca-central-1">
+                      ca-central-1
+                    </option>
+                  </>
+                )}
+              </select>
+            </label>
+
+            <label>
+              Capacity
+
+              <input
+                type="number"
+                min="1"
+                value={nodeData.capacity || 500}
+                onChange={(event) =>
+                  nodeData.onUpdate?.(
+                    id,
+                    "capacity",
+                    Number(event.target.value)
+                  )
+                }
+              />
+            </label>
+
+            <div className="node-popup-actions">
+              {nodeData.componentType === "API Server" && (
+                <button
+                  className="popup-deploy-button"
+                  disabled={nodeData.deploying}
+                  onClick={() =>
+                    nodeData.onDeploy?.(id)
+                  }
+                >
+                  {nodeData.deploying
+                    ? "Deploying..."
+                    : "Deploy Locally"}
+                </button>
+              )}
+
+              <button
+                className="popup-delete-button"
+                onClick={() =>
+                  nodeData.onDelete?.(id)
+                }
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+
+          {nodeData.deployment && (
+            <div className="deployment-card">
+              <div className="deployment-card-header">
+                <div>
+                  <span className="deployment-eyebrow">
+                    Deployment
+                  </span>
+
+                  <strong>
+                    {nodeData.deployment.deployment?.serviceName}
+                  </strong>
+                </div>
+
+                <div className="deployment-status-pill">
+                  <span className="status-dot" />
+                  {nodeData.deployment.deployment?.status}
+                </div>
+              </div>
+
+              {nodeData.deployment.error ? (
+                <div className="deployment-failed">
+                  {nodeData.deployment.error}
+                </div>
+              ) : (
+                <>
+                  <div className="deployment-info-list">
+                    <div className="deployment-info-row">
+                      <span>Container</span>
+
+                      <code>
+                        {
+                          nodeData.deployment.deployment
+                            ?.containerName
+                        }
+                      </code>
+                    </div>
+
+                    <div className="deployment-info-row">
+                      <span>Endpoint</span>
+
+                      <code>
+                        localhost:
+                        {
+                          nodeData.deployment.deployment
+                            ?.hostPort
+                        }
+                      </code>
+                    </div>
+
+                    <div className="deployment-info-row">
+                      <span>Health Check</span>
+
+                      <code>/health</code>
+                    </div>
+                  </div>
+
+                  <a
+                    className="health-link"
+                    href={`http://localhost:${
+                      nodeData.deployment.deployment
+                        ?.hostPort
+                    }/health`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open Health Endpoint
+                  </a>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </NodeToolbar>
       <Handle
         type="target"
         position={Position.Top}

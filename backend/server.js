@@ -2,7 +2,12 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
 dotenv.config();
+
+const execFileAsync = promisify(execFile);
 
 const db = require("./db");
 
@@ -32,6 +37,130 @@ function normalizeComponentType(componentType) {
 
 app.use(cors());
 app.use(express.json());
+
+function getArchitectureNodes(architectureId) {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      SELECT
+        id,
+        component_type,
+        label,
+        provider,
+        region,
+        capacity,
+        status
+      FROM nodes
+      WHERE architecture_id = ?
+    `;
+
+    db.query(sql, [architectureId], (error, results) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(results);
+      }
+    });
+  });
+}
+
+async function runDockerApiContainer(
+  architectureId,
+  node
+) {
+  const shortId = node.id
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 8);
+
+  const containerName =
+    `failover-${architectureId}-${shortId}`.toLowerCase();
+
+  // Remove an old container with the same name if one exists.
+  try {
+    await execFileAsync("docker", [
+      "rm",
+      "-f",
+      containerName,
+    ]);
+  } catch {
+    // Fine if the container didn't already exist.
+  }
+
+  const serviceName =
+    node.label || node.component_type;
+
+  const capacity =
+    String(node.capacity || 500);
+
+  await execFileAsync("docker", [
+    "run",
+    "-d",
+
+    "--name",
+    containerName,
+
+    "-p",
+    "127.0.0.1::3000",
+
+    "-e",
+    `SERVICE_NAME=${serviceName}`,
+
+    "-e",
+    `CAPACITY=${capacity}`,
+
+    "failover-api-server",
+  ]);
+
+  // Ask Docker which random host port it assigned.
+  const { stdout } = await execFileAsync("docker", [
+    "port",
+    containerName,
+    "3000/tcp",
+  ]);
+
+  const portMatch = stdout.trim().match(/:(\d+)$/);
+
+  if (!portMatch) {
+    throw new Error(
+      `Could not determine port for ${containerName}`
+    );
+  }
+
+  const hostPort = Number(portMatch[1]);
+
+  return {
+    nodeId: node.id,
+    containerName,
+    serviceName,
+    hostPort,
+  };
+}
+
+async function waitForHealthyService(
+  hostPort,
+  attempts = 10
+) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${hostPort}/health`
+      );
+
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      // Container may still be starting.
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 500)
+    );
+  }
+
+  throw new Error(
+    `Service on port ${hostPort} failed its health check`
+  );
+}
 
 // Test route
 app.get("/", (req, res) => {
@@ -416,6 +545,85 @@ app.get("/api/architectures/:id/runtime-spec", (req, res) => {
     });
   });
 });
+
+app.post(
+  "/api/architectures/:id/deploy-local",
+  async (req, res) => {
+    const architectureId = req.params.id;
+    const { nodeId } = req.body;
+
+    if (!nodeId) {
+      return res.status(400).json({
+        error: "A component must be selected",
+      });
+    }
+
+    try {
+      const nodes =
+        await getArchitectureNodes(architectureId);
+
+      const node = nodes.find(
+        (currentNode) => currentNode.id === nodeId
+      );
+
+      if (!node) {
+        return res.status(404).json({
+          error: "Component not found",
+        });
+      }
+
+      if (node.component_type !== "API Server") {
+        return res.status(400).json({
+          error:
+            "Local deployment currently only supports API Server components",
+        });
+      }
+
+      const deployment =
+        await runDockerApiContainer(
+          architectureId,
+          node
+        );
+
+      try {
+        const health =
+          await waitForHealthyService(
+            deployment.hostPort
+          );
+
+        return res.json({
+          architectureId: Number(architectureId),
+
+          deployment: {
+            ...deployment,
+            status: "Healthy",
+            health,
+          },
+        });
+      } catch (error) {
+        return res.json({
+          architectureId: Number(architectureId),
+
+          deployment: {
+            ...deployment,
+            status: "Unhealthy",
+            error: error.message,
+          },
+        });
+      }
+    } catch (error) {
+      console.error(
+        "Local deployment failed:",
+        error
+      );
+
+      res.status(500).json({
+        error: "Local deployment failed",
+        details: error.message,
+      });
+    }
+  }
+);
 
 const PORT = 5000;
 

@@ -190,8 +190,30 @@ function Dashboard() {
   );
 }
 
+type DeploymentResult = {
+  error?: string;
+
+  deployment?: {
+    nodeId: string;
+    containerName: string;
+    serviceName: string;
+    hostPort: number;
+    status: string;
+
+    health?: {
+      service: string;
+      status: string;
+      capacity: number;
+      timestamp: string;
+    };
+  };
+};
+
 function ArchitectureEditor() {
   const { id } = useParams();
+
+  const [fullscreenCanvas, setFullscreenCanvas] =
+    useState(false);
 
   const [architecture, setArchitecture] =
     useState<Architecture | null>(null);
@@ -204,9 +226,14 @@ function ArchitectureEditor() {
   const [locked, setLocked] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  const selectedNode = nodes.find(
-    (node) => node.id === selectedNodeId
-  );
+  const [deploymentResult, setDeploymentResult] =
+    useState<DeploymentResult | null>(null);
+
+  const [deployedNodeId, setDeployedNodeId] =
+    useState<string | null>(null);
+
+  const [deploying, setDeploying] =
+    useState(false);
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -227,6 +254,61 @@ function ArchitectureEditor() {
     loadArchitecture();
     loadEditor();
   }, [id]);
+
+async function deployLocally(nodeId: string) {
+  console.log("1. Deploy clicked:", nodeId);
+
+  setDeployedNodeId(nodeId);
+  setDeploying(true);
+  setDeploymentResult(null);
+
+  try {
+    console.log("2. Saving editor");
+
+    await saveEditor();
+
+    console.log("3. Editor saved");
+
+    const response = await fetch(
+      `http://localhost:5000/api/architectures/${id}/deploy-local`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nodeId,
+        }),
+      }
+    );
+
+    console.log("4. Backend responded:", response.status);
+
+    const data = await response.json();
+
+    console.log("5. Deployment result:", data);
+
+    if (!response.ok) {
+      setDeploymentResult({
+        error: data.error || "Local deployment failed",
+      });
+
+      return;
+    }
+
+    setDeploymentResult(data);
+
+    console.log("6. Deployment state updated");
+  } catch (error) {
+    console.error("DEPLOY ERROR:", error);
+
+    setDeploymentResult({
+      error: "Could not deploy component",
+    });
+  } finally {
+    setDeploying(false);
+  }
+}
 
   async function previewRuntime() {
     const response = await fetch(
@@ -277,8 +359,9 @@ function ArchitectureEditor() {
     );
 
     if (!response.ok) {
-      console.error("Failed to save architecture");
-      return;
+      throw new Error(
+        "Failed to save architecture"
+      );
     }
 
     console.log("Architecture saved");
@@ -370,37 +453,67 @@ function ArchitectureEditor() {
     setSelectedNodeId(null);
   }
 
-  function updateSelectedNode(
+  function updateNode(
+    nodeId: string,
     field: string,
     value: string | number
   ) {
-    if (!selectedNodeId) {
-      return;
-    }
-
     setNodes((currentNodes) =>
       currentNodes.map((node) => {
-        if (node.id !== selectedNodeId) {
+        if (node.id !== nodeId) {
           return node;
+        }
+
+        let updatedData = {
+          ...node.data,
+          [field]: value,
+        };
+
+        if (field === "provider") {
+          updatedData = {
+            ...updatedData,
+
+            region:
+              value === "AWS"
+                ? "us-east-1"
+                : "canada-central",
+          };
         }
 
         return {
           ...node,
-
-          data: {
-            ...node.data,
-            [field]: value,
-          },
+          data: updatedData,
         };
       })
     );
   }
 
+  const displayNodes = nodes.map((node) => ({
+    ...node,
+
+    data: {
+      ...node.data,
+
+      onUpdate: updateNode,
+      onDelete: deleteComponent,
+      onDeploy: deployLocally,
+
+      deploying:
+        deploying &&
+        selectedNodeId === node.id,
+
+      deployment:
+        deployedNodeId === node.id
+          ? deploymentResult
+          : null,
+    },
+  }));
+
   if (!architecture) {
     return <p>Loading...</p>;
   }
 
-  return (
+    return (
     <div className="editor-page">
       <aside className="sidebar">
         <Link to="/">← Back</Link>
@@ -414,15 +527,6 @@ function ArchitectureEditor() {
         <button onClick={previewRuntime}>
           Preview Runtime
         </button>
-
-        {selectedNodeId && !locked && (
-          <button
-            className="delete-component-button"
-            onClick={() => deleteComponent(selectedNodeId)}
-          >
-            Delete Selected Component
-          </button>
-        )}
 
         <p>Components</p>
 
@@ -472,141 +576,25 @@ function ArchitectureEditor() {
         </button>
       </aside>
 
-      {selectedNode && !locked && (
-        <div className="properties-panel">
-          <h3>Component Settings</h3>
-
-          <label>
-            Name
-
-            <input
-              value={String(selectedNode.data.label || "")}
-              onChange={(event) =>
-                updateSelectedNode(
-                  "label",
-                  event.target.value
-                )
-              }
-            />
-          </label>
-
-          <label>
-            Provider
-
-            <select
-              value={String(
-                selectedNode.data.provider || "AWS"
-              )}
-              onChange={(event) => {
-                const provider = event.target.value;
-
-                updateSelectedNode(
-                  "provider",
-                  provider
-                );
-
-                if (provider === "AWS") {
-                  updateSelectedNode(
-                    "region",
-                    "us-east-1"
-                  );
-                } else {
-                  updateSelectedNode(
-                    "region",
-                    "canada-central"
-                  );
-                }
-              }}
-            >
-              <option value="AWS">
-                AWS
-              </option>
-
-              <option value="Azure">
-                Azure
-              </option>
-            </select>
-          </label>
-
-          <label>
-            Region
-
-            <select
-              value={String(
-                selectedNode.data.region || "us-east-1"
-              )}
-              onChange={(event) =>
-                updateSelectedNode(
-                  "region",
-                  event.target.value
-                )
-              }
-            >
-              {selectedNode.data.provider === "Azure" ? (
-                <>
-                  <option value="canada-central">
-                    Canada Central
-                  </option>
-
-                  <option value="east-us">
-                    East US
-                  </option>
-
-                  <option value="west-europe">
-                    West Europe
-                  </option>
-                </>
-              ) : (
-                <>
-                  <option value="us-east-1">
-                    us-east-1
-                  </option>
-
-                  <option value="us-west-2">
-                    us-west-2
-                  </option>
-
-                  <option value="ca-central-1">
-                    ca-central-1
-                  </option>
-                </>
-              )}
-            </select>
-          </label>
-
-          <label>
-            Capacity
-
-            <input
-              type="number"
-              min="1"
-              value={Number(
-                selectedNode.data.capacity || 500
-              )}
-              onChange={(event) =>
-                updateSelectedNode(
-                  "capacity",
-                  Number(event.target.value)
-                )
-              }
-            />
-          </label>
-        </div>
-      )}
-
       <div
-        className="flow-container"
+        className={
+          fullscreenCanvas
+            ? "flow-container flow-container-fullscreen"
+            : "flow-container"
+        }
         onDrop={onDrop}
         onDragOver={onDragOver}
       >
         <ReactFlow
-          nodes={nodes}
+          nodes={displayNodes}
           edges={edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
-          deleteKeyCode={["Backspace", "Delete"]}
+          deleteKeyCode={
+            locked ? null : ["Backspace", "Delete"]
+          }
           onNodeClick={(_, node) => {
             setSelectedNodeId(node.id);
           }}
@@ -616,7 +604,7 @@ function ArchitectureEditor() {
           onPaneClick={() => {
             setSelectedNodeId(null);
           }}
-          nodesDraggable ={!locked}
+          nodesDraggable={!locked}
           nodesConnectable={!locked}
           elementsSelectable={!locked}
           panOnDrag={!locked}
@@ -638,10 +626,34 @@ function ArchitectureEditor() {
 
           <Controls
             showInteractive={false}
+            showFitView={false}
           >
             <ControlButton
-              onClick={() => setLocked((current) => !current)}
-              title={locked ? "Unlock canvas" : "Lock canvas"}
+              onClick={() =>
+                setFullscreenCanvas(
+                  (current) => !current
+                )
+              }
+              title={
+                fullscreenCanvas
+                  ? "Exit canvas fullscreen"
+                  : "Canvas fullscreen"
+              }
+            >
+              {fullscreenCanvas ? "↙" : "⛶"}
+            </ControlButton>
+
+            <ControlButton
+              onClick={() =>
+                setLocked(
+                  (current) => !current
+                )
+              }
+              title={
+                locked
+                  ? "Unlock canvas"
+                  : "Lock canvas"
+              }
             >
               {locked ? "🔒" : "🔓"}
             </ControlButton>
