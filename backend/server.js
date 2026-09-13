@@ -65,6 +65,60 @@ function getArchitectureNodes(architectureId) {
   });
 }
 
+function getArchitectureConnections(architectureId) {
+  return new Promise((resolve, reject) => {
+    const sql = `
+      SELECT
+        source_node_id,
+        target_node_id
+      FROM connections
+      WHERE architecture_id = ?
+    `;
+
+    db.query(sql, [architectureId], (error, results) => {
+      if (error) {
+        reject(error);
+      } else {
+        resolve(results);
+      }
+    });
+  });
+}
+
+function getNodeDependencies(
+  node,
+  allNodes,
+  connections
+) {
+  const connectedNodeIds = connections
+    .filter(
+      (connection) =>
+        connection.source_node_id === node.id ||
+        connection.target_node_id === node.id
+    )
+    .map((connection) =>
+      connection.source_node_id === node.id
+        ? connection.target_node_id
+        : connection.source_node_id
+    );
+
+  return connectedNodeIds
+    .map((connectedNodeId) =>
+      allNodes.find(
+        (candidate) =>
+          candidate.id === connectedNodeId
+      )
+    )
+    .filter(
+      (candidate) =>
+        candidate &&
+        (
+          candidate.component_type === "MySQL Database" ||
+          candidate.component_type === "Redis Cache"
+        )
+    );
+}
+
 async function runDockerApiContainer(
   architectureId,
   node
@@ -203,7 +257,9 @@ async function getPublishedPort(
 async function deployNodeLocally(
   architectureId,
   node,
-  networkName
+  networkName,
+  dependencies = [],
+  runtimeMysqlPassword = null
 ) {
   const shortId = node.id
     .replace(/[^a-zA-Z0-9]/g, "")
@@ -221,7 +277,7 @@ async function deployNodeLocally(
   // API SERVER
 
   if (node.component_type === "API Server") {
-    await execFileAsync("docker", [
+    const dockerArgs = [
       "run",
       "-d",
 
@@ -242,14 +298,57 @@ async function deployNodeLocally(
 
       "-e",
       `CAPACITY=${node.capacity || 500}`,
+    ];
 
-      "failover-api-server",
-    ]);
+    for (const dependency of dependencies) {
+      const dependencyHost =
+        sanitizeDockerName(
+          dependency.label ||
+          dependency.component_type
+        );
 
-    const hostPort = await getPublishedPort(
-      containerName,
-      3000
+      if (
+        dependency.component_type ===
+        "MySQL Database"
+      ) {
+        dockerArgs.push(
+          "-e",
+          `DB_HOST=${dependencyHost}`,
+
+          "-e",
+          "DB_PORT=3306",
+
+          "-e",
+          `DB_PASSWORD=${runtimeMysqlPassword}`
+        );
+      }
+
+      if (
+        dependency.component_type ===
+        "Redis Cache"
+      ) {
+        dockerArgs.push(
+          "-e",
+          `REDIS_HOST=${dependencyHost}`,
+
+          "-e",
+          "REDIS_PORT=6379"
+        );
+      }
+    }
+
+    dockerArgs.push("failover-api-server");
+
+    await execFileAsync(
+      "docker",
+      dockerArgs
     );
+
+    const hostPort =
+      await getPublishedPort(
+        containerName,
+        3000
+      );
 
     return {
       nodeId: node.id,
@@ -264,9 +363,6 @@ async function deployNodeLocally(
   // MYSQL
 
   if (node.component_type === "MySQL Database") {
-    const mysqlPassword =
-      crypto.randomBytes(12).toString("hex");
-
     await execFileAsync("docker", [
       "run",
       "-d",
@@ -284,8 +380,7 @@ async function deployNodeLocally(
       "127.0.0.1::3306",
 
       "-e",
-      `MYSQL_ROOT_PASSWORD=${mysqlPassword}`,
-
+      `MYSQL_ROOT_PASSWORD=${runtimeMysqlPassword}`,
       "-e",
       "MYSQL_DATABASE=failover_runtime",
 
@@ -354,7 +449,7 @@ async function deployNodeLocally(
 
 async function waitForHealthyService(
   hostPort,
-  attempts = 10
+  attempts = 40
 ) {
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
@@ -362,15 +457,15 @@ async function waitForHealthyService(
         `http://127.0.0.1:${hostPort}/health`
       );
 
-      if (response.ok) {
-        return await response.json();
-      }
+      const health = await response.json();
+
+      return health;
     } catch {
       // Container may still be starting.
     }
 
     await new Promise((resolve) =>
-      setTimeout(resolve, 500)
+      setTimeout(resolve, 750)
     );
   }
 
@@ -398,7 +493,8 @@ async function determineDeploymentStatus(
 
       return {
         ...deployment,
-        status: "Healthy",
+        status:
+          health.status || "Running",
         health,
       };
     } catch (error) {
@@ -821,10 +917,18 @@ app.post(
 
     try {
       const nodes =
-        await getArchitectureNodes(architectureId);
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      const connections =
+        await getArchitectureConnections(
+          architectureId
+        );
 
       const node = nodes.find(
-        (currentNode) => currentNode.id === nodeId
+        (currentNode) =>
+          currentNode.id === nodeId
       );
 
       if (!node) {
@@ -833,17 +937,40 @@ app.post(
         });
       }
 
-      if (node.component_type !== "API Server") {
+      if (
+        node.component_type !==
+        "API Server"
+      ) {
         return res.status(400).json({
           error:
             "Local deployment currently only supports API Server components",
         });
       }
 
+      const networkName =
+        await ensureDockerNetwork(
+          architectureId
+        );
+
+      const dependencies =
+        getNodeDependencies(
+          node,
+          nodes,
+          connections
+        );
+
+      const runtimeMysqlPassword =
+        crypto
+          .randomBytes(12)
+          .toString("hex");
+
       const deployment =
-        await runDockerApiContainer(
+        await deployNodeLocally(
           architectureId,
-          node
+          node,
+          networkName,
+          dependencies,
+          runtimeMysqlPassword
         );
 
       try {
@@ -853,7 +980,8 @@ app.post(
           );
 
         return res.json({
-          architectureId: Number(architectureId),
+          architectureId:
+            Number(architectureId),
 
           deployment: {
             ...deployment,
@@ -863,7 +991,8 @@ app.post(
         });
       } catch (error) {
         return res.json({
-          architectureId: Number(architectureId),
+          architectureId:
+            Number(architectureId),
 
           deployment: {
             ...deployment,
@@ -896,6 +1025,13 @@ app.post(
         await getArchitectureNodes(
           architectureId
         );
+      const connections =
+        await getArchitectureConnections(
+          architectureId
+        );
+
+      const runtimeMysqlPassword =
+        crypto.randomBytes(12).toString("hex");
 
       if (nodes.length === 0) {
         return res.status(400).json({
@@ -911,13 +1047,51 @@ app.post(
 
       const deployments = [];
 
-      for (const node of nodes) {
+      const deploymentOrder = [
+        ...nodes.filter(
+          (node) =>
+            node.component_type ===
+            "MySQL Database"
+        ),
+
+        ...nodes.filter(
+          (node) =>
+            node.component_type ===
+            "Redis Cache"
+        ),
+
+        ...nodes.filter(
+          (node) =>
+            node.component_type ===
+            "API Server"
+        ),
+
+        ...nodes.filter(
+          (node) =>
+            ![
+              "MySQL Database",
+              "Redis Cache",
+              "API Server",
+            ].includes(node.component_type)
+        ),
+      ];
+
+      for (const node of deploymentOrder) {
         try {
+          const dependencies =
+            getNodeDependencies(
+              node,
+              nodes,
+              connections
+            );
+
           const deployment =
             await deployNodeLocally(
               architectureId,
               node,
-              networkName
+              networkName,
+              dependencies,
+              runtimeMysqlPassword
             );
 
           const checkedDeployment =

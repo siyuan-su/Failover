@@ -227,6 +227,27 @@ type ArchitectureDeployment = {
   }[];
 };
 
+type RuntimeService = {
+  id: string;
+  name: string;
+  type: string;
+  provider: string;
+  region: string;
+  capacity: number;
+  status: string;
+};
+
+type RuntimeConnection = {
+  source: string;
+  target: string;
+};
+
+type RuntimePreview = {
+  architectureId: number;
+  services: RuntimeService[];
+  connections: RuntimeConnection[];
+};
+
 function ArchitectureEditor() {
   const { id } = useParams();
 
@@ -269,6 +290,15 @@ function ArchitectureEditor() {
     setDeployingArchitecture,
   ] = useState(false);
 
+  const [runtimePreview, setRuntimePreview] =
+  useState<RuntimePreview | null>(null);
+
+  const [showRuntimePreview, setShowRuntimePreview] =
+    useState(false);
+
+  const [loadingRuntimePreview, setLoadingRuntimePreview] =
+    useState(false);
+
   useEffect(() => {
     async function loadArchitecture() {
       const response = await fetch(
@@ -288,6 +318,36 @@ function ArchitectureEditor() {
     loadArchitecture();
     loadEditor();
   }, [id]);
+
+  function getRuntimeService(
+    serviceId: string
+  ) {
+    return runtimePreview?.services.find(
+      (service) => service.id === serviceId
+    );
+  }
+
+  function getDockerImage(type: string) {
+    switch (type) {
+      case "api-server":
+        return "failover-api-server";
+
+      case "mysql":
+        return "mysql:8.4";
+
+      case "redis":
+        return "redis:7-alpine";
+
+      case "load-balancer":
+        return "Not implemented yet";
+
+      case "worker":
+        return "Not implemented yet";
+
+      default:
+        return "Unsupported";
+    }
+  }
 
   async function deployLocally(nodeId: string) {
     console.log("1. Deploy clicked:", nodeId);
@@ -384,18 +444,35 @@ function ArchitectureEditor() {
   }
 
   async function previewRuntime() {
-    const response = await fetch(
-      `http://localhost:5000/api/architectures/${id}/runtime-spec`
-    );
+    setLoadingRuntimePreview(true);
 
-    if (!response.ok) {
-      console.error("Failed to build runtime specification");
-      return;
+    try {
+      // Make sure the preview reflects the current editor.
+      await saveEditor();
+
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/runtime-spec`
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "Failed to build runtime specification"
+        );
+      }
+
+      const data: RuntimePreview =
+        await response.json();
+
+      setRuntimePreview(data);
+      setShowRuntimePreview(true);
+    } catch (error) {
+      console.error(
+        "Failed to preview runtime:",
+        error
+      );
+    } finally {
+      setLoadingRuntimePreview(false);
     }
-
-    const data = await response.json();
-
-    console.log("Runtime specification:", data);
   }
 
   async function loadEditor() {
@@ -606,8 +683,13 @@ function ArchitectureEditor() {
           Save Architecture
         </button>
 
-        <button onClick={previewRuntime}>
-          Preview Runtime
+        <button
+          onClick={previewRuntime}
+          disabled={loadingRuntimePreview}
+        >
+          {loadingRuntimePreview
+            ? "Building Preview..."
+            : "Preview Runtime"}
         </button>
 
         <button
@@ -616,7 +698,7 @@ function ArchitectureEditor() {
           disabled={deployingArchitecture}
         >
           {deployingArchitecture
-            ? "Deploying Architecture..."
+            ? "Starting & Checking Services..."
             : "Deploy Architecture Locally"}
         </button>
 
@@ -784,8 +866,376 @@ function ArchitectureEditor() {
               {locked ? "🔒" : "🔓"}
             </ControlButton>
           </Controls>
-        </ReactFlow>
+                </ReactFlow>
       </div>
+
+      {showRuntimePreview && runtimePreview && (
+        <div
+          className="runtime-preview-overlay"
+          onMouseDown={() =>
+            setShowRuntimePreview(false)
+          }
+        >
+          {showRuntimePreview && runtimePreview && (
+            <div
+              className="runtime-preview-overlay"
+              onMouseDown={() =>
+                setShowRuntimePreview(false)
+              }
+            >
+              <div
+                className="runtime-preview-modal"
+                onMouseDown={(event) =>
+                  event.stopPropagation()
+                }
+              >
+                {/* HEADER */}
+                <div className="runtime-preview-header">
+                  <div>
+                    <span className="runtime-preview-eyebrow">
+                      Runtime Preview
+                    </span>
+
+                    <h2>{architecture.name}</h2>
+
+                    <p>
+                      See what Failover will create before
+                      deploying your architecture.
+                    </p>
+                  </div>
+
+                  <button
+                    className="runtime-preview-close"
+                    onClick={() =>
+                      setShowRuntimePreview(false)
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+
+                {/* SUMMARY */}
+                <div className="runtime-preview-summary">
+                  <div className="runtime-summary-item">
+                    <span>Target</span>
+                    <strong>Local Docker</strong>
+                  </div>
+
+                  <div className="runtime-summary-item">
+                    <span>Services</span>
+                    <strong>
+                      {runtimePreview.services.length}
+                    </strong>
+                  </div>
+
+                  <div className="runtime-summary-item">
+                    <span>Connections</span>
+                    <strong>
+                      {runtimePreview.connections.length}
+                    </strong>
+                  </div>
+
+                  <div className="runtime-summary-item">
+                    <span>Network</span>
+                    <strong>
+                      failover-{runtimePreview.architectureId}-network
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="runtime-preview-content">
+                  {/* SERVICES */}
+                  <section className="runtime-preview-section">
+                    <div className="runtime-section-title">
+                      <h3>Services</h3>
+
+                      <p>
+                        Components that will become runtime
+                        services.
+                      </p>
+                    </div>
+
+                    <div className="runtime-service-grid">
+                      {runtimePreview.services.map(
+                        (service) => (
+                          <div
+                            className="runtime-service-card"
+                            key={service.id}
+                          >
+                            <div className="runtime-service-heading">
+                              <div>
+                                <strong>
+                                  {service.name}
+                                </strong>
+
+                                <span>
+                                  {service.type}
+                                </span>
+                              </div>
+
+                              <span className="runtime-ready-badge">
+                                Ready
+                              </span>
+                            </div>
+
+                            <div className="runtime-service-divider" />
+
+                            <div className="runtime-service-details">
+                              <div>
+                                <span>Provider</span>
+                                <strong>
+                                  {service.provider}
+                                </strong>
+                              </div>
+
+                              <div>
+                                <span>Region</span>
+                                <strong>
+                                  {service.region}
+                                </strong>
+                              </div>
+
+                              <div>
+                                <span>Capacity</span>
+                                <strong>
+                                  {service.capacity}
+                                </strong>
+                              </div>
+
+                              <div>
+                                <span>Docker Image</span>
+
+                                <code>
+                                  {getDockerImage(
+                                    service.type
+                                  )}
+                                </code>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </section>
+
+                  {/* LOWER GRID */}
+                  <div className="runtime-lower-grid">
+                    {/* CONNECTIONS */}
+                    <section className="runtime-preview-section runtime-panel">
+                      <div className="runtime-section-title">
+                        <h3>Connections</h3>
+
+                        <p>
+                          Dependencies detected from your
+                          diagram.
+                        </p>
+                      </div>
+
+                      {runtimePreview.connections.length ===
+                      0 ? (
+                        <div className="runtime-empty">
+                          No component connections.
+                        </div>
+                      ) : (
+                        <div className="runtime-connection-list">
+                          {runtimePreview.connections.map(
+                            (connection, index) => {
+                              const source =
+                                getRuntimeService(
+                                  connection.source
+                                );
+
+                              const target =
+                                getRuntimeService(
+                                  connection.target
+                                );
+
+                              return (
+                                <div
+                                  className="runtime-connection"
+                                  key={`${connection.source}-${connection.target}-${index}`}
+                                >
+                                  <strong>
+                                    {source?.name ||
+                                      "Unknown"}
+                                  </strong>
+
+                                  <span>→</span>
+
+                                  <strong>
+                                    {target?.name ||
+                                      "Unknown"}
+                                  </strong>
+                                </div>
+                              );
+                            }
+                          )}
+                        </div>
+                      )}
+                    </section>
+
+                    {/* DOCKER PLAN */}
+                    <section className="runtime-preview-section runtime-panel">
+                      <div className="runtime-section-title">
+                        <h3>Docker Plan</h3>
+
+                        <p>
+                          Containers Failover will create
+                          locally.
+                        </p>
+                      </div>
+
+                      <div className="runtime-docker-plan">
+                        <div className="runtime-plan-row">
+                          <strong>
+                            Docker Network
+                          </strong>
+
+                          <code>
+                            failover-
+                            {runtimePreview.architectureId}
+                            -network
+                          </code>
+                        </div>
+
+                        {runtimePreview.services.map(
+                          (service) => (
+                            <div
+                              className="runtime-plan-row"
+                              key={service.id}
+                            >
+                              <strong>
+                                {service.name}
+                              </strong>
+
+                              <span>→</span>
+
+                              <code>
+                                {getDockerImage(
+                                  service.type
+                                )}
+                              </code>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  {/* VALIDATION */}
+                  <section className="runtime-preview-section runtime-validation-panel">
+                    <div className="runtime-section-title">
+                      <h3>Validation</h3>
+
+                      <p>
+                        Checks before local deployment.
+                      </p>
+                    </div>
+
+                    <div className="runtime-validation-grid">
+                      <div className="validation-success">
+                        <span>✓</span>
+
+                        <div>
+                          <strong>
+                            {
+                              runtimePreview.services
+                                .length
+                            }{" "}
+                            services found
+                          </strong>
+
+                          <p>
+                            Runtime services detected.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="validation-success">
+                        <span>✓</span>
+
+                        <div>
+                          <strong>
+                            Docker network will be created
+                          </strong>
+
+                          <p>
+                            failover-
+                            {
+                              runtimePreview.architectureId
+                            }
+                            -network
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="validation-success">
+                        <span>✓</span>
+
+                        <div>
+                          <strong>
+                            {
+                              runtimePreview.connections
+                                .length
+                            }{" "}
+                            dependency connections
+                          </strong>
+
+                          <p>
+                            Service dependencies configured.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="validation-warning">
+                        <span>!</span>
+
+                        <div>
+                          <strong>
+                            Cloud provider metadata
+                          </strong>
+
+                          <p>
+                            AWS/Azure settings are metadata
+                            in Local Docker mode.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+
+                {/* FOOTER */}
+                <div className="runtime-preview-footer">
+                  <button
+                    className="runtime-cancel-button"
+                    onClick={() =>
+                      setShowRuntimePreview(false)
+                    }
+                  >
+                    Close
+                  </button>
+
+                  <button
+                    className="runtime-deploy-button"
+                    disabled={deployingArchitecture}
+                    onClick={async () => {
+                      await deployArchitectureLocally();
+
+                      setShowRuntimePreview(false);
+                    }}
+                  >
+                    {deployingArchitecture
+                      ? "Starting Services..."
+                      : "Deploy Architecture Locally"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }
