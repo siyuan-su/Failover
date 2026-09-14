@@ -1161,6 +1161,38 @@ app.get(
 
           if (
             node.component_type ===
+            "Load Balancer"
+          ) {
+            const hostPort =
+              await getPublishedPort(
+                containerName,
+                3000
+              );
+
+            if (hostPort) {
+              try {
+                const response = await fetch(
+                  `http://127.0.0.1:${hostPort}/health`,
+                  {
+                    signal:
+                      AbortSignal.timeout(1000),
+                  }
+                );
+
+                health =
+                  await response.json();
+
+                status =
+                  health.status ||
+                  "Running";
+              } catch {
+                status = "Unhealthy";
+              }
+            }
+          }
+
+          if (
+            node.component_type ===
             "MySQL Database"
           ) {
             status = "Healthy";

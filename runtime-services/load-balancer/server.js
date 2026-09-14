@@ -15,48 +15,138 @@ const backendHosts = (
 
 let currentIndex = 0;
 
-async function checkBackend(host) {
+
+/*BACKEND HEALTH STATE*/
+
+const backendState = new Map();
+
+for (const host of backendHosts) {
+  backendState.set(host, {
+    healthy: true,
+    consecutiveFailures: 0,
+    consecutiveSuccesses: 0,
+  });
+}
+
+
+/*SINGLE HEALTH PROBE*/
+
+async function probeBackend(host) {
   try {
-    const response = await fetch(
-      `http://${host}:3000/health`,
-      {
-        signal: AbortSignal.timeout(700),
-      }
+    const response = await fetch(`http://${host}:3000/health`,{  signal:    AbortSignal.timeout(2000),}
     );
 
     if (!response.ok) {
       return false;
     }
 
-    const health = await response.json();
+    const health =
+      await response.json();
 
     return health.status === "Healthy";
-  } catch {
+  } catch (error) {
+    console.log(
+      `Health probe failed for ${host}:`,
+      error.message
+    );
+
     return false;
   }
 }
 
-async function getHealthyBackends() {
-  const results = await Promise.all(
-    backendHosts.map(async (host) => ({
-      host,
-      healthy: await checkBackend(host),
-    }))
-  );
 
-  return results;
+/*STABLE HEALTH CHECK*/
+
+async function checkBackend(host) {
+  const state =
+    backendState.get(host);
+
+  if (!state) {
+    return {
+      host,
+      healthy: false,
+      consecutiveFailures: 0,
+      consecutiveSuccesses: 0,
+    };
+  }
+
+  const probeHealthy =
+    await probeBackend(host);
+
+  if (probeHealthy) {
+    state.consecutiveSuccesses += 1;
+    state.consecutiveFailures = 0;
+
+    /*
+     * One successful health check is enough
+     * to bring a recovered backend online.
+     */
+    if (
+      state.consecutiveSuccesses >= 1
+    ) {
+      state.healthy = true;
+    }
+  } else {
+    state.consecutiveFailures += 1;
+    state.consecutiveSuccesses = 0;
+
+    /*
+     * Do not eject a backend because of one
+     * temporary timeout.
+     *
+     * Require 3 consecutive failures.
+     */
+    if (
+      state.consecutiveFailures >= 3
+    ) {
+      state.healthy = false;
+    }
+  }
+
+  return {
+    host,
+    healthy: state.healthy,
+    consecutiveFailures:
+      state.consecutiveFailures,
+    consecutiveSuccesses:
+      state.consecutiveSuccesses,
+  };
 }
 
-async function chooseBackend() {
+
+/*CHECK ALL BACKENDS*/
+
+async function getBackendStates() {
+  return Promise.all(
+    backendHosts.map(
+      (host) =>
+        checkBackend(host)
+    )
+  );
+}
+
+
+/*GET HEALTHY BACKENDS*/
+
+async function getHealthyBackends() {
   const backendStates =
+    await getBackendStates();
+
+  return backendStates.filter(
+    (backend) => backend.healthy
+  );
+}
+
+
+/*ROUND ROBIN BACKEND SELECTION*/
+
+async function chooseBackend() {
+  const healthyBackends =
     await getHealthyBackends();
 
-  const healthyBackends =
-    backendStates.filter(
-      (backend) => backend.healthy
-    );
-
-  if (healthyBackends.length === 0) {
+  if (
+    healthyBackends.length === 0
+  ) {
     return null;
   }
 
@@ -73,9 +163,12 @@ async function chooseBackend() {
   return selected.host;
 }
 
+
+/*LOAD BALANCER HEALTH*/
+
 app.get("/health", async (req, res) => {
   const backendStates =
-    await getHealthyBackends();
+    await getBackendStates();
 
   const healthyCount =
     backendStates.filter(
@@ -86,7 +179,7 @@ app.get("/health", async (req, res) => {
 
   if (
     healthyCount ===
-    backendStates.length &&
+      backendStates.length &&
     healthyCount > 0
   ) {
     status = "Healthy";
@@ -101,82 +194,113 @@ app.get("/health", async (req, res) => {
 
     status,
 
-    activeBackends: healthyCount,
+    activeBackends:
+      healthyCount,
 
     totalBackends:
       backendStates.length,
 
-    backends: backendStates,
+    backends:
+      backendStates,
 
     timestamp:
       new Date().toISOString(),
   });
 });
 
-app.all("/proxy/*path", async (req, res) => {
-  const backend =
-    await chooseBackend();
 
-  if (!backend) {
-    return res.status(503).json({
-      error:
-        "No healthy API servers available",
-    });
+/*PROXY REQUESTS*/
+
+app.all(
+  "/proxy/*path",
+  async (req, res) => {
+    const backend =
+      await chooseBackend();
+
+    if (!backend) {
+      return res
+        .status(503)
+        .json({
+          error:
+            "No healthy API servers available",
+        });
+    }
+
+    const path =
+      req.params.path;
+
+    try {
+      const response =
+        await fetch(
+          `http://${backend}:3000/${path}`,
+          {
+            method: req.method,
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              req.method === "GET" ||
+              req.method === "HEAD"
+                ? undefined
+                : JSON.stringify(
+                    req.body
+                  ),
+
+            signal:
+              AbortSignal.timeout(
+                2000
+              ),
+          }
+        );
+
+      const text =
+        await response.text();
+
+      res
+        .status(response.status)
+        .type(
+          response.headers.get(
+            "content-type"
+          ) ||
+            "text/plain"
+        )
+        .send(text);
+    } catch (error) {
+      console.log(
+        `Proxy request to ${backend} failed:`,
+        error.message
+      );
+
+      res
+        .status(502)
+        .json({
+          error:
+            "Selected backend failed during request",
+        });
+    }
   }
+);
 
-  const path = req.params.path;
 
-  try {
-    const response = await fetch(
-      `http://${backend}:3000/${path}`,
-      {
-        method: req.method,
-
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
-        body:
-          req.method === "GET" ||
-          req.method === "HEAD"
-            ? undefined
-            : JSON.stringify(req.body),
-
-        signal:
-          AbortSignal.timeout(1500),
-      }
-    );
-
-    const text =
-      await response.text();
-
-    res
-      .status(response.status)
-      .type(
-        response.headers.get(
-          "content-type"
-        ) || "text/plain"
-      )
-      .send(text);
-  } catch {
-    res.status(502).json({
-      error:
-        "Selected backend failed during request",
-    });
-  }
-});
+/*ROOT ROUTE*/
 
 app.get("/", async (req, res) => {
   const backend =
     await chooseBackend();
 
   if (!backend) {
-    return res.status(503).json({
-      status: "Unavailable",
-      message:
-        "No healthy API servers are available",
-    });
+    return res
+      .status(503)
+      .json({
+        status:
+          "Unavailable",
+
+        message:
+          "No healthy API servers are available",
+      });
   }
 
   res.json({
@@ -184,6 +308,9 @@ app.get("/", async (req, res) => {
     routedTo: backend,
   });
 });
+
+
+/*START SERVER*/
 
 app.listen(PORT, () => {
   console.log(
