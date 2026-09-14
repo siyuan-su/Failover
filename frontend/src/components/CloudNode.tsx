@@ -194,18 +194,66 @@ export default function CloudNode({
             <label>
               Capacity
 
-              <input
-                type="number"
-                min="1"
-                value={nodeData.capacity || 500}
-                onChange={(event) =>
-                  nodeData.onUpdate?.(
-                    id,
-                    "capacity",
-                    Number(event.target.value)
-                  )
-                }
-              />
+              <div className="capacity-input">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={nodeData.capacity ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+
+                    if (value === "" || /^\d+$/.test(value)) {
+                      nodeData.onUpdate?.(
+                        id,
+                        "capacity",
+                        value === "" ? "" : Number(value)
+                      );
+                    }
+                  }}
+                  onBlur={(event) => {
+                    if (event.target.value === "") {
+                      nodeData.onUpdate?.(
+                        id,
+                        "capacity",
+                        500
+                      );
+                    }
+                  }}
+                />
+
+                <div className="capacity-controls">
+                  <button
+                    type="button"
+                    className="capacity-arrow"
+                    onClick={() =>
+                      nodeData.onUpdate?.(
+                        id,
+                        "capacity",
+                        (Number(nodeData.capacity) || 0) + 10
+                      )
+                    }
+                  >
+                    ▲
+                  </button>
+
+                  <button
+                    type="button"
+                    className="capacity-arrow"
+                    onClick={() =>
+                      nodeData.onUpdate?.(
+                        id,
+                        "capacity",
+                        Math.max(
+                          0,
+                          (Number(nodeData.capacity) || 0) - 10
+                        )
+                      )
+                    }
+                  >
+                    ▼
+                  </button>
+                </div>
+              </div>
             </label>
 
             <div className="node-popup-actions">
@@ -231,17 +279,18 @@ export default function CloudNode({
               >
                 Delete
               </button>
-              {nodeData.runtimeStatus?.status ===
-                "Running" && (
-                <button
-                  className="simulate-failure-button"
-                  onClick={() =>
-                    nodeData.onStopRuntime?.(id)
-                  }
-                >
-                  Simulate Failure
-                </button>
-              )}
+              {nodeData.runtimeStatus &&
+                nodeData.runtimeStatus.status !== "Failed" &&
+                nodeData.runtimeStatus.status !== "Not Deployed" && (
+                  <button
+                    className="simulate-failure-button"
+                    onClick={() =>
+                      nodeData.onStopRuntime?.(id)
+                    }
+                  >
+                    Simulate Failure
+                  </button>
+                )}
               {nodeData.runtimeStatus?.status ===
                 "Failed" && (
                 <button
