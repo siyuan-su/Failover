@@ -109,14 +109,18 @@ function getNodeDependencies(
           candidate.id === connectedNodeId
       )
     )
-    .filter(
-      (candidate) =>
-        candidate &&
-        (
-          candidate.component_type === "MySQL Database" ||
-          candidate.component_type === "Redis Cache"
-        )
-    );
+  .filter(
+    (candidate) =>
+      candidate &&
+      (
+        candidate.component_type ===
+          "MySQL Database" ||
+        candidate.component_type ===
+          "Redis Cache" ||
+        candidate.component_type ===
+          "API Server"
+      )
+  );
 }
 
 async function runDockerApiContainer(
@@ -538,6 +542,80 @@ async function deployNodeLocally(
     };
   }
 
+  // LOAD BALANCER
+
+  if (
+    node.component_type ===
+    "Load Balancer"
+  ) {
+    const apiDependencies =
+      dependencies.filter(
+        (dependency) =>
+          dependency.component_type ===
+          "API Server"
+      );
+
+    const backendHosts =
+      apiDependencies.map(
+        (dependency) =>
+          sanitizeDockerName(
+            dependency.label ||
+              dependency.component_type
+          )
+      );
+
+    if (backendHosts.length === 0) {
+      throw new Error(
+        "Load Balancer must be connected to at least one API Server"
+      );
+    }
+
+    const dockerArgs = [
+      "run",
+      "-d",
+
+      "--name",
+      containerName,
+
+      "--network",
+      networkName,
+
+      "--network-alias",
+      sanitizeDockerName(serviceName),
+
+      "-p",
+      "127.0.0.1::3000",
+
+      "-e",
+      `SERVICE_NAME=${serviceName}`,
+
+      "-e",
+      `BACKENDS=${backendHosts.join(",")}`,
+
+      "failover-load-balancer",
+    ];
+
+    await execFileAsync(
+      "docker",
+      dockerArgs
+    );
+
+    const hostPort =
+      await getPublishedPort(
+        containerName,
+        3000
+      );
+
+    return {
+      nodeId: node.id,
+      type: node.component_type,
+      serviceName,
+      containerName,
+      hostPort,
+      status: "Starting",
+    };
+  }
+
   return {
     nodeId: node.id,
     type: node.component_type,
@@ -593,7 +671,10 @@ async function determineDeploymentStatus(
   }
 
   if (
-    deployment.type === "API Server" &&
+    (
+      deployment.type === "API Server" ||
+      deployment.type === "Load Balancer"
+    ) &&
     deployment.hostPort
   ) {
     try {
@@ -1304,11 +1385,20 @@ app.post(
 
         ...nodes.filter(
           (node) =>
+            node.component_type ===
+            "Load Balancer"
+        ),
+
+        ...nodes.filter(
+          (node) =>
             ![
               "MySQL Database",
               "Redis Cache",
               "API Server",
-            ].includes(node.component_type)
+              "Load Balancer",
+            ].includes(
+              node.component_type
+            )
         ),
       ];
 
