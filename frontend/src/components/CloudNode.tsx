@@ -15,7 +15,9 @@ import {
   Globe,
 } from "lucide-react";
 
+import CustomSelect from "./CustomSelect";
 import "./CloudNode.css";
+
 
 type CloudNodeData = {
   label: string;
@@ -99,7 +101,19 @@ export default function CloudNode({
   const { zoom } = useViewport();
 
   return (
-    <div className="cloud-node">
+    <div
+      className={`cloud-node ${
+        nodeData.runtimeStatus?.status ===
+        "Failed"
+          ? "cloud-node-failed"
+          : nodeData.runtimeStatus?.status ===
+              "Degraded"
+            ? "cloud-node-degraded"
+            : nodeData.runtimeStatus
+              ? "cloud-node-healthy"
+              : ""
+      }`}
+    >
      <NodeToolbar
       isVisible={selected}
       position={Position.Right}
@@ -135,64 +149,46 @@ export default function CloudNode({
             <label>
               Provider
 
-              <select
+              <CustomSelect
                 value={nodeData.provider || "AWS"}
-                onChange={(event) =>
+                options={["AWS", "Azure"]}
+                onChange={(value) =>
                   nodeData.onUpdate?.(
                     id,
                     "provider",
-                    event.target.value
+                    value
                   )
                 }
-              >
-                <option value="AWS">AWS</option>
-                <option value="Azure">Azure</option>
-              </select>
+              />
             </label>
-
             <label>
               Region
 
-              <select
-                value={nodeData.region || "us-east-1"}
-                onChange={(event) =>
+              <CustomSelect
+                value={
+                  nodeData.region || "us-east-1"
+                }
+                options={
+                  nodeData.provider === "Azure"
+                    ? [
+                        "canada-central",
+                        "east-us",
+                        "west-europe",
+                      ]
+                    : [
+                        "us-east-1",
+                        "us-west-2",
+                        "ca-central-1",
+                      ]
+                }
+                onChange={(value) =>
                   nodeData.onUpdate?.(
                     id,
                     "region",
-                    event.target.value
+                    value
                   )
                 }
-              >
-                {nodeData.provider === "Azure" ? (
-                  <>
-                    <option value="canada-central">
-                      Canada Central
-                    </option>
-
-                    <option value="east-us">
-                      East US
-                    </option>
-
-                    <option value="west-europe">
-                      West Europe
-                    </option>
-                  </>
-                ) : (
-                  <>
-                    <option value="us-east-1">
-                      us-east-1
-                    </option>
-
-                    <option value="us-west-2">
-                      us-west-2
-                    </option>
-
-                    <option value="ca-central-1">
-                      ca-central-1
-                    </option>
-                  </>
-                )}
-              </select>
+              />
             </label>
 
             <label>
@@ -404,12 +400,18 @@ export default function CloudNode({
           <span>Status</span>
           <span
             className={
-              nodeData.status === "Healthy" || !nodeData.status
-                ? "healthy-text"
-                : "unhealthy-text"
+              nodeData.runtimeStatus?.status ===
+                "Failed"
+                ? "failed-text"
+                : nodeData.runtimeStatus?.status ===
+                    "Degraded"
+                  ? "degraded-text"
+                  : "healthy-text"
             }
           >
-            {nodeData.status || "Healthy"}
+            {nodeData.runtimeStatus?.status ||
+              nodeData.status ||
+              "Healthy"}
           </span>
         </div>
       </div>

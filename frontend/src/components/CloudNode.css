@@ -250,6 +250,15 @@
   cursor: pointer;
 }
 
+.node-popup select {
+  text-align: center;
+  text-align-last: center;
+}
+
+.node-popup select option {
+  text-align: center;
+}
+
 .node-popup input:focus,
 .node-popup select:focus {
   border-color: #1687ff;
@@ -874,3 +883,28 @@
 .recover-service-button:hover {
   background: #194535;
 }
+
+.healthy-text {
+  color: #34d399 !important;
+}
+
+.degraded-text {
+  color: #f4c152 !important;
+}
+
+.failed-text {
+  color: #ff6b6b !important;
+}
+
+.cloud-node-healthy {
+  border-color: #23c483;
+}
+
+.cloud-node-degraded {
+  border-color: #e0a936;
+}
+
+.cloud-node-failed {
+  border-color: #e85d64;
+}
+

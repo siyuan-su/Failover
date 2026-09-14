@@ -934,8 +934,7 @@ app.get("/api/architectures/:id/runtime-spec", (req, res) => {
 app.get(
   "/api/architectures/:id/runtime-status",
   async (req, res) => {
-    const architectureId =
-      req.params.id;
+    const architectureId = req.params.id;
 
     try {
       const nodes =
@@ -958,9 +957,53 @@ app.get(
           );
 
         let status = "Not Deployed";
+        let health = null;
 
         if (dockerStatus === "running") {
           status = "Running";
+
+          // API Server has an HTTP health endpoint,
+          // so use it for the real runtime status.
+          if (
+            node.component_type === "API Server"
+          ) {
+            const hostPort =
+              await getPublishedPort(
+                containerName,
+                3000
+              );
+
+            if (hostPort) {
+              try {
+                const response = await fetch(
+                  `http://127.0.0.1:${hostPort}/health`
+                );
+
+                health =
+                  await response.json();
+
+                status =
+                  health.status ||
+                  "Running";
+              } catch {
+                status = "Unhealthy";
+              }
+            }
+          }
+
+          if (
+            node.component_type ===
+            "MySQL Database"
+          ) {
+            status = "Healthy";
+          }
+
+          if (
+            node.component_type ===
+            "Redis Cache"
+          ) {
+            status = "Healthy";
+          }
         }
 
         if (
@@ -972,9 +1015,13 @@ app.get(
 
         services.push({
           nodeId: node.id,
+          componentType:
+            node.component_type,
+
           containerName,
           dockerStatus,
           status,
+          health,
         });
       }
 

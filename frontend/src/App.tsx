@@ -250,9 +250,26 @@ type RuntimePreview = {
 
 type RuntimeStatus = {
   nodeId: string;
+  componentType: string;
   containerName: string;
   dockerStatus: string;
   status: string;
+
+  health?: {
+    status?: string;
+
+    dependencies?: {
+      mysql?: {
+        status: string;
+        error?: string;
+      };
+
+      redis?: {
+        status: string;
+        error?: string;
+      };
+    };
+  };
 };
 
 function ArchitectureEditor() {
@@ -306,8 +323,10 @@ function ArchitectureEditor() {
   const [loadingRuntimePreview, setLoadingRuntimePreview] =
     useState(false);
 
-  const [runtimeStatuses, setRuntimeStatuses] =
-    useState<RuntimeStatus[]>([]);
+  const [
+    runtimeStatuses,
+    setRuntimeStatuses,
+  ] = useState<RuntimeStatus[]>([]);
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -341,13 +360,9 @@ function ArchitectureEditor() {
       2000
     );
 
-    return () => {
+    return () =>
       clearInterval(interval);
-    };
-  }, [
-    architectureDeployment,
-    id,
-  ]);
+  }, [architectureDeployment, id]);
 
   function getRuntimeService(
     serviceId: string
@@ -406,27 +421,25 @@ function ArchitectureEditor() {
   }
 
   async function loadRuntimeStatus() {
-  try {
-    const response = await fetch(
-      `http://localhost:5000/api/architectures/${id}/runtime-status`
-    );
+    try {
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/runtime-status`
+      );
 
-    if (!response.ok) {
-      return;
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+
+      setRuntimeStatuses(data.services);
+    } catch (error) {
+      console.error(
+        "Failed to load runtime status:",
+        error
+      );
     }
-
-    const data = await response.json();
-
-    setRuntimeStatuses(
-      data.services
-    );
-  } catch (error) {
-    console.error(
-      "Failed to load runtime status:",
-      error
-    );
   }
-}
 
   async function deployLocally(nodeId: string) {
     setDeployedNodeId(nodeId);
