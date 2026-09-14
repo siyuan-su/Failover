@@ -16,7 +16,7 @@ import {
 } from "@xyflow/react";
 
 import "@xyflow/react/dist/style.css";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import "./App.css";
 import CloudNode from "./components/CloudNode";
@@ -328,6 +328,12 @@ function ArchitectureEditor() {
     setRuntimeStatuses,
   ] = useState<RuntimeStatus[]>([]);
 
+  const [recoveringNodeIds, setRecoveringNodeIds] =
+    useState<Set<string>>(new Set());
+
+  const runtimeRequestId =
+    useRef(0);
+
   useEffect(() => {
     async function loadArchitecture() {
       const response = await fetch(
@@ -353,16 +359,38 @@ function ArchitectureEditor() {
       return;
     }
 
-    loadRuntimeStatus();
+    let cancelled = false;
 
-    const interval = setInterval(
-      loadRuntimeStatus,
-      2000
-    );
+    let timeoutId:
+      ReturnType<typeof setTimeout>;
 
-    return () =>
-      clearInterval(interval);
-  }, [architectureDeployment, id]);
+    async function pollRuntime() {
+      if (cancelled) {
+        return;
+      }
+
+      await loadRuntimeStatus();
+
+      if (!cancelled) {
+        timeoutId = setTimeout(
+          pollRuntime,
+          500
+        );
+      }
+    }
+
+    pollRuntime();
+
+    return () => {
+      cancelled = true;
+
+      clearTimeout(timeoutId);
+    };
+  }, [
+    architectureDeployment,
+    id,
+    recoveringNodeIds,
+  ]);
 
   function getRuntimeService(
     serviceId: string
@@ -397,30 +425,166 @@ function ArchitectureEditor() {
   async function restartRuntimeService(
     nodeId: string
   ) {
-    await fetch(
-      `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/restart`,
-      {
-        method: "POST",
-      }
+    // Immediately show Recovering.
+    setRecoveringNodeIds((current) => {
+      const next = new Set(current);
+
+      next.add(nodeId);
+
+      return next;
+    });
+
+    setRuntimeStatuses((current) =>
+      current.map((runtime) =>
+        runtime.nodeId === nodeId
+          ? {
+              ...runtime,
+              dockerStatus: "starting",
+              status: "Recovering",
+            }
+          : runtime
+      )
     );
 
-    await loadRuntimeStatus();
+    try {
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/restart`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "Failed to recover service"
+        );
+      }
+
+      // Keep checking until Docker reports the
+      // recovered service as healthy.
+      for (
+        let attempt = 0;
+        attempt < 20;
+        attempt++
+      ) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, 400)
+        );
+
+        const statusResponse = await fetch(
+          `http://localhost:5000/api/architectures/${id}/runtime-status`
+        );
+
+        if (!statusResponse.ok) {
+          continue;
+        }
+
+        const data =
+          await statusResponse.json();
+
+        const recoveredService =
+          data.services.find(
+            (service: RuntimeStatus) =>
+              service.nodeId === nodeId
+          );
+
+        if (
+          recoveredService?.status ===
+          "Healthy"
+        ) {
+          // Recovery is genuinely complete.
+          setRecoveringNodeIds(
+            (current) => {
+              const next =
+                new Set(current);
+
+              next.delete(nodeId);
+
+              return next;
+            }
+          );
+
+          setRuntimeStatuses(
+            data.services
+          );
+
+          return;
+        }
+      }
+
+      // Container started, but didn't become
+      // healthy within our recovery window.
+      setRecoveringNodeIds((current) => {
+        const next = new Set(current);
+
+        next.delete(nodeId);
+
+        return next;
+      });
+
+      await loadRuntimeStatus();
+    } catch (error) {
+      console.error(
+        "Service recovery failed:",
+        error
+      );
+
+      setRecoveringNodeIds((current) => {
+        const next = new Set(current);
+
+        next.delete(nodeId);
+
+        return next;
+      });
+
+      await loadRuntimeStatus();
+    }
   }
 
   async function stopRuntimeService(
     nodeId: string
   ) {
-    await fetch(
-      `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/stop`,
-      {
-        method: "POST",
-      }
+    // Immediately show failure in the UI.
+    setRuntimeStatuses((current) =>
+      current.map((runtime) =>
+        runtime.nodeId === nodeId
+          ? {
+              ...runtime,
+              dockerStatus: "exited",
+              status: "Failed",
+            }
+          : runtime
+      )
     );
 
-    await loadRuntimeStatus();
+    try {
+      await fetch(
+        `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/stop`,
+        {
+          method: "POST",
+        }
+      );
+
+      await loadRuntimeStatus();
+
+      // Check again shortly afterward so dependency
+      // degradation appears quickly.
+      await loadRuntimeStatus();
+
+    } catch (error) {
+      console.error(
+        "Failure simulation failed:",
+        error
+      );
+
+      await loadRuntimeStatus();
+    }
   }
 
   async function loadRuntimeStatus() {
+    const requestId =
+      ++runtimeRequestId.current;
+
     try {
       const response = await fetch(
         `http://localhost:5000/api/architectures/${id}/runtime-status`
@@ -430,9 +594,36 @@ function ArchitectureEditor() {
         return;
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
-      setRuntimeStatuses(data.services);
+      // If a newer request started while this one
+      // was running, ignore this old response.
+      if (
+        requestId !==
+        runtimeRequestId.current
+      ) {
+        return;
+      }
+
+      setRuntimeStatuses(
+        data.services.map(
+          (service: RuntimeStatus) => {
+            if (
+              recoveringNodeIds.has(
+                service.nodeId
+              )
+            ) {
+              return {
+                ...service,
+                status: "Recovering",
+              };
+            }
+
+            return service;
+          }
+        )
+      );
     } catch (error) {
       console.error(
         "Failed to load runtime status:",
@@ -552,27 +743,56 @@ function ArchitectureEditor() {
     }
   }
 
-  async function previewRuntime() {
+  function previewRuntime() {
     setLoadingRuntimePreview(true);
 
     try {
-      // Make sure the preview reflects the current editor.
-      await saveEditor();
+      const services: RuntimeService[] =
+        nodes.map((node) => ({
+          id: node.id,
 
-      const response = await fetch(
-        `http://localhost:5000/api/architectures/${id}/runtime-spec`
-      );
+          name:
+            String(node.data.label) ||
+            String(node.data.componentType),
 
-      if (!response.ok) {
-        throw new Error(
-          "Failed to build runtime specification"
-        );
-      }
+          type:
+            node.data.componentType === "API Server"
+              ? "api-server"
+              : node.data.componentType === "MySQL Database"
+                ? "mysql"
+                : node.data.componentType === "Redis Cache"
+                  ? "redis"
+                  : node.data.componentType === "Load Balancer"
+                    ? "load-balancer"
+                    : node.data.componentType === "Worker"
+                      ? "worker"
+                      : "unknown",
 
-      const data: RuntimePreview =
-        await response.json();
+          provider:
+            String(node.data.provider || "AWS"),
 
-      setRuntimePreview(data);
+          region:
+            String(node.data.region || "us-east-1"),
+
+          capacity:
+            Number(node.data.capacity || 500),
+
+          status:
+            String(node.data.status || "Healthy"),
+        }));
+
+      const connections: RuntimeConnection[] =
+        edges.map((edge) => ({
+          source: edge.source,
+          target: edge.target,
+        }));
+
+      setRuntimePreview({
+        architectureId: Number(id),
+        services,
+        connections,
+      });
+
       setShowRuntimePreview(true);
     } catch (error) {
       console.error(
@@ -793,6 +1013,51 @@ function ArchitectureEditor() {
     return <p>Loading...</p>;
   }
 
+  function getRuntimeDependencyConnections() {
+    if (!runtimePreview) {
+      return [];
+    }
+
+    return runtimePreview.connections.filter(
+      (connection) => {
+        const source =
+          getRuntimeService(
+            connection.source
+          );
+
+        const target =
+          getRuntimeService(
+            connection.target
+          );
+
+        if (!source || !target) {
+          return false;
+        }
+
+        const sourceIsApi =
+          source.type === "api-server";
+
+        const targetIsApi =
+          target.type === "api-server";
+
+        const sourceIsDependency =
+          source.type === "mysql" ||
+          source.type === "redis";
+
+        const targetIsDependency =
+          target.type === "mysql" ||
+          target.type === "redis";
+
+        return (
+          (sourceIsApi &&
+            targetIsDependency) ||
+          (targetIsApi &&
+            sourceIsDependency)
+        );
+      }
+    );
+  }
+
     return (
     <div className="editor-page">
       <aside className="sidebar">
@@ -989,14 +1254,6 @@ function ArchitectureEditor() {
           </Controls>
                 </ReactFlow>
       </div>
-
-      {showRuntimePreview && runtimePreview && (
-        <div
-          className="runtime-preview-overlay"
-          onMouseDown={() =>
-            setShowRuntimePreview(false)
-          }
-        >
           {showRuntimePreview && runtimePreview && (
             <div
               className="runtime-preview-overlay"
@@ -1147,8 +1404,7 @@ function ArchitectureEditor() {
                         <h3>Connections</h3>
 
                         <p>
-                          Dependencies detected from your
-                          diagram.
+                          Service topology defined by your diagram.
                         </p>
                       </div>
 
@@ -1295,15 +1551,12 @@ function ArchitectureEditor() {
 
                         <div>
                           <strong>
-                            {
-                              runtimePreview.connections
-                                .length
-                            }{" "}
-                            dependency connections
+                            {getRuntimeDependencyConnections().length}{" "}
+                            runtime dependencies
                           </strong>
 
                           <p>
-                            Service dependencies configured.
+                            API database/cache dependencies configured.
                           </p>
                         </div>
                       </div>
@@ -1354,9 +1607,6 @@ function ArchitectureEditor() {
               </div>
             </div>
           )}
-        </div>
-      )}
-
     </div>
   );
 }

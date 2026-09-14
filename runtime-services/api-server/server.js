@@ -37,6 +37,8 @@ async function checkMySQL() {
 
         database:
           "failover_runtime",
+          
+        connectTimeout: 750,
       });
 
     await connection.ping();
@@ -61,16 +63,18 @@ async function checkRedis() {
 
   const client = createClient({
     socket: {
-      host:
-        process.env.REDIS_HOST,
+      host: process.env.REDIS_HOST,
 
       port:
-        Number(
-          process.env.REDIS_PORT
-        ) || 6379,
+        Number(process.env.REDIS_PORT) ||
+        6379,
+
+      connectTimeout: 750,
+
+      reconnectStrategy: false,
     },
   });
-
+  
   try {
     await client.connect();
 

@@ -103,11 +103,10 @@ export default function CloudNode({
   return (
     <div
       className={`cloud-node ${
-        nodeData.runtimeStatus?.status ===
-        "Failed"
+        nodeData.runtimeStatus?.status === "Failed"
           ? "cloud-node-failed"
-          : nodeData.runtimeStatus?.status ===
-              "Degraded"
+          : nodeData.runtimeStatus?.status === "Degraded" ||
+              nodeData.runtimeStatus?.status === "Unhealthy"
             ? "cloud-node-degraded"
             : nodeData.runtimeStatus
               ? "cloud-node-healthy"
@@ -449,11 +448,10 @@ export default function CloudNode({
           <span>Status</span>
           <span
             className={
-              nodeData.runtimeStatus?.status ===
-                "Failed"
+              nodeData.runtimeStatus?.status === "Failed"
                 ? "failed-text"
-                : nodeData.runtimeStatus?.status ===
-                    "Degraded"
+                : nodeData.runtimeStatus?.status === "Degraded" ||
+                    nodeData.runtimeStatus?.status === "Unhealthy"
                   ? "degraded-text"
                   : "healthy-text"
             }

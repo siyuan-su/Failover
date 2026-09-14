@@ -206,6 +206,77 @@ async function getContainerStatus(containerName) {
   }
 }
 
+async function isMysqlReady(containerName) {
+  try {
+    await execFileAsync("docker", [
+      "exec",
+      containerName,
+      "mysqladmin",
+      "ping",
+      "-uroot",
+      "--silent",
+    ]);
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isRedisReady(containerName) {
+  try {
+    const { stdout } =
+      await execFileAsync("docker", [
+        "exec",
+        containerName,
+        "redis-cli",
+        "ping",
+      ]);
+
+    return stdout.trim() === "PONG";
+  } catch {
+    return false;
+  }
+}
+
+async function waitForContainerReady(
+  containerName,
+  componentType,
+  attempts = 30
+) {
+  for (
+    let attempt = 0;
+    attempt < attempts;
+    attempt++
+  ) {
+    let ready = false;
+
+    if (
+      componentType === "MySQL Database"
+    ) {
+      ready =
+        await isMysqlReady(containerName);
+    }
+
+    if (
+      componentType === "Redis Cache"
+    ) {
+      ready =
+        await isRedisReady(containerName);
+    }
+
+    if (ready) {
+      return true;
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, 250)
+    );
+  }
+
+  return false;
+}
+
 function getRuntimeContainerName(
   architectureId,
   nodeId
@@ -479,26 +550,38 @@ async function waitForHealthyService(
   hostPort,
   attempts = 40
 ) {
-  for (let attempt = 0; attempt < attempts; attempt++) {
+  for (
+    let attempt = 0;
+    attempt < attempts;
+    attempt++
+  ) {
     try {
       const response = await fetch(
-        `http://127.0.0.1:${hostPort}/health`
+        `http://127.0.0.1:${hostPort}/health`,
+        {
+          signal: AbortSignal.timeout(750),
+        }
       );
 
-      const health = await response.json();
+      const health =
+        await response.json();
 
-      return health;
+      // Do NOT finish deployment while
+      // the API is still degraded.
+      if (health.status === "Healthy") {
+        return health;
+      }
     } catch {
-      // Container may still be starting.
+      // API may still be starting.
     }
 
     await new Promise((resolve) =>
-      setTimeout(resolve, 750)
+      setTimeout(resolve, 250)
     );
   }
 
   throw new Error(
-    `Service on port ${hostPort} failed its health check`
+    `Service on port ${hostPort} failed to become healthy`
   );
 }
 
@@ -976,7 +1059,11 @@ app.get(
             if (hostPort) {
               try {
                 const response = await fetch(
-                  `http://127.0.0.1:${hostPort}/health`
+                  `http://127.0.0.1:${hostPort}/health`,
+                  {
+                    signal:
+                      AbortSignal.timeout(750),
+                  }
                 );
 
                 health =
@@ -1002,7 +1089,14 @@ app.get(
             node.component_type ===
             "Redis Cache"
           ) {
-            status = "Healthy";
+            const ready =
+              await isRedisReady(
+                containerName
+              );
+
+            status = ready
+              ? "Healthy"
+              : "Recovering";
           }
         }
 
@@ -1236,6 +1330,33 @@ app.post(
               runtimeMysqlPassword
             );
 
+          // Databases/cache containers can be "running"
+          // before they are actually ready.
+          if (
+            node.component_type ===
+              "MySQL Database" ||
+            node.component_type ===
+              "Redis Cache"
+          ) {
+            const ready =
+              await waitForContainerReady(
+                deployment.containerName,
+                node.component_type,
+                runtimeMysqlPassword
+              );
+
+            if (!ready) {
+              deployments.push({
+                ...deployment,
+                status: "Unhealthy",
+                error:
+                  `${node.component_type} failed to become ready`,
+              });
+
+              continue;
+            }
+          }
+
           const checkedDeployment =
             await determineDeploymentStatus(
               deployment
@@ -1303,7 +1424,7 @@ app.post(
 
     try {
       await execFileAsync("docker", [
-        "stop",
+        "kill",
         containerName,
       ]);
 
@@ -1342,7 +1463,7 @@ app.post(
 
     try {
       await execFileAsync("docker", [
-        "restart",
+        "start",
         containerName,
       ]);
 

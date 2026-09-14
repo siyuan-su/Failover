@@ -147,7 +147,7 @@
 /* COMPONENT SETTINGS */
 
 .node-popup {
-  width: 290px;
+  width: 360x;
 
   padding: 14px 16px;
 
@@ -1039,4 +1039,57 @@
 
 .capacity-arrow:active {
   color: #1687ff;
+}
+
+/* Give action buttons enough room */
+.node-popup {
+  width: 340px;
+}
+
+.node-popup-actions {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.popup-deploy-button {
+  flex: 1.15;
+  min-width: 0;
+  padding: 10px 8px;
+  white-space: nowrap;
+}
+
+.popup-delete-button {
+  flex: 0.7;
+  width: auto;
+  min-width: 0;
+  padding: 10px 8px;
+}
+
+.simulate-failure-button,
+.recover-service-button {
+  flex: 1.15;
+  min-width: 112px;
+
+  padding: 10px 10px;
+
+  border-radius: 8px;
+
+  font-size: 12px;
+  font-weight: 600;
+
+  white-space: nowrap;
+}
+
+.simulate-failure-button {
+  background: #301719;
+  border: 1px solid #7d3439;
+  color: #ff9a9f;
+}
+
+.recover-service-button {
+  background: #123126;
+  border: 1px solid #276b50;
+  color: #62dca7;
 }
