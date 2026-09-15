@@ -492,7 +492,7 @@ async function deployNodeLocally(
       networkName,
 
       "--network-alias",
-      sanitizeDockerName(serviceName),
+      containerName,
 
       "-p",
       "127.0.0.1::3000",
@@ -659,9 +659,9 @@ async function deployNodeLocally(
     const backendHosts =
       apiDependencies.map(
         (dependency) =>
-          sanitizeDockerName(
-            dependency.label ||
-              dependency.component_type
+          getRuntimeContainerName(
+            architectureId,
+            dependency.id
           )
       );
 
@@ -1667,10 +1667,34 @@ app.post(
       );
 
     try {
+      const dockerStatus =
+        await getContainerStatus(containerName);
+
+      if (dockerStatus === "missing") {
+        return res.status(404).json({
+          error: "Runtime container does not exist",
+        });
+      }
+
+      if (dockerStatus !== "running") {
+        return res.json({
+          nodeId,
+          containerName,
+          status: "Failed",
+          message: "Service is already stopped",
+        });
+      }
+
       await execFileAsync("docker", [
         "kill",
         containerName,
       ]);
+
+      return res.json({
+        nodeId,
+        containerName,
+        status: "Failed",
+      });
 
       res.json({
         nodeId,
