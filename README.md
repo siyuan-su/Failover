@@ -12,6 +12,15 @@ Each service can also be configured independently for AWS or Azure,
 allowing a single architecture to deploy services across multiple cloud
 providers.
 
+## Screenshots
+
+<img width="1919" height="1067" alt="image" src="https://github.com/user-attachments/assets/bee03139-e05f-45ed-af70-62446d55c05e" />
+<img width="1919" height="1067" alt="image" src="https://github.com/user-attachments/assets/2cbe7397-a000-4374-ad54-227a89512f58" />
+<img width="1919" height="1072" alt="image" src="https://github.com/user-attachments/assets/3e561485-b203-4dab-85f2-262bf8933e1b" />
+<img width="1919" height="1066" alt="image" src="https://github.com/user-attachments/assets/7756e071-ea7e-4bac-859e-97aa6d08549e" />
+<img width="1850" height="1038" alt="image" src="https://github.com/user-attachments/assets/88d01ccc-c9f9-43ac-912a-42a803cb099a" />
+<img width="927" height="734" alt="image" src="https://github.com/user-attachments/assets/04f347b7-d4c4-4b84-820d-b7e7acc9c09a" />
+
 ## Features
 
 ### Visual Architecture Designer
