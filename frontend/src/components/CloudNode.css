@@ -147,7 +147,7 @@
 /* COMPONENT SETTINGS */
 
 .node-popup {
-  width: 360x;
+  width: 360px;
 
   padding: 14px 16px;
 
@@ -1092,4 +1092,109 @@
   background: #123126;
   border: 1px solid #276b50;
   color: #62dca7;
+}
+
+.lb-runtime-card {
+  margin-top: 4px;
+  padding: 12px;
+
+  background: #09141b;
+  border: 1px solid #29404f;
+  border-radius: 9px;
+}
+
+.lb-runtime-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin-bottom: 9px;
+
+  color: #9fb0bf;
+  font-size: 12px;
+}
+
+.lb-runtime-header strong {
+  color: #ffffff;
+  font-size: 13px;
+}
+
+.lb-backend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.lb-backend-row {
+  display: grid;
+  grid-template-columns:
+    8px 1fr auto;
+
+  align-items: center;
+  gap: 7px;
+
+  font-size: 11px;
+}
+
+.lb-backend-row strong {
+  font-size: 10px;
+}
+
+.lb-backend-dot {
+  width: 7px;
+  height: 7px;
+
+  border-radius: 50%;
+}
+
+.lb-backend-dot.healthy {
+  background: #34d399;
+}
+
+.lb-backend-dot.failed {
+  background: #ff6b6b;
+}
+
+.lb-test-button {
+  width: 100%;
+
+  margin-top: 10px;
+  padding: 8px 10px;
+
+  background: #1687ff;
+
+  border: none;
+  border-radius: 7px;
+
+  color: white;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.lb-test-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.lb-route-result {
+  margin-top: 8px;
+
+  color: #a9b9c6;
+  font-size: 11px;
+  text-align: center;
+}
+
+.lb-route-result strong {
+  color: #34d399;
+}
+
+.lb-route-error {
+  margin-top: 8px;
+
+  color: #ff8f95;
+  font-size: 11px;
+  text-align: center;
 }

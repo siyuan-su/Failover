@@ -258,6 +258,16 @@ type RuntimeStatus = {
   health?: {
     status?: string;
 
+    activeBackends?: number;
+    totalBackends?: number;
+
+    backends?: {
+      host: string;
+      healthy: boolean;
+      consecutiveFailures?: number;
+      consecutiveSuccesses?: number;
+    }[];
+
     dependencies?: {
       mysql?: {
         status: string;
@@ -270,6 +280,24 @@ type RuntimeStatus = {
       };
     };
   };
+};
+
+type RoutingTest = {
+  status?: string;
+  routedTo?: string;
+  hostPort?: number;
+  error?: string;
+};
+
+type RuntimeEvent = {
+  id: string;
+  timestamp: string;
+  message: string;
+  kind:
+    | "success"
+    | "warning"
+    | "error"
+    | "info";
 };
 
 function ArchitectureEditor() {
@@ -331,8 +359,31 @@ function ArchitectureEditor() {
   const [recoveringNodeIds, setRecoveringNodeIds] =
     useState<Set<string>>(new Set());
 
-  const runtimeRequestId =
-    useRef(0);
+  const [
+    routingTests,
+    setRoutingTests,
+  ] = useState<
+    Record<string, RoutingTest>
+  >({});
+
+  const [
+    testingRoutingNodeId,
+    setTestingRoutingNodeId,
+  ] = useState<string | null>(
+    null
+  );
+
+  const [
+    runtimeEvents,
+    setRuntimeEvents,
+  ] = useState<RuntimeEvent[]>(
+    []
+  );
+
+  const lastRuntimeStatuses =
+    useRef<Map<string, string>>(
+      new Map()
+    );
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -364,7 +415,7 @@ function ArchitectureEditor() {
     let timeoutId:
       ReturnType<typeof setTimeout>;
 
-    async function pollRuntime() {
+    async function poll() {
       if (cancelled) {
         return;
       }
@@ -373,13 +424,13 @@ function ArchitectureEditor() {
 
       if (!cancelled) {
         timeoutId = setTimeout(
-          pollRuntime,
+          poll,
           500
         );
       }
     }
 
-    pollRuntime();
+    poll();
 
     return () => {
       cancelled = true;
@@ -391,6 +442,158 @@ function ArchitectureEditor() {
     id,
     recoveringNodeIds,
   ]);
+
+  async function testLoadBalancer(
+    nodeId: string
+  ) {
+    setTestingRoutingNodeId(
+      nodeId
+    );
+
+    try {
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/runtime/${nodeId}/test-route`,
+        {
+          method: "POST",
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+          "Traffic test failed"
+        );
+      }
+
+      setRoutingTests(
+        (current) => ({
+          ...current,
+          [nodeId]: data,
+        })
+      );
+
+      addRuntimeEvent(
+        `Traffic routed to ${data.routedTo}`,
+        "info"
+      );
+    } catch (error) {
+      setRoutingTests(
+        (current) => ({
+          ...current,
+
+          [nodeId]: {
+            error:
+              error instanceof Error
+                ? error.message
+                : "Traffic test failed",
+          },
+        })
+      );
+    } finally {
+      setTestingRoutingNodeId(
+        null
+      );
+    }
+  }
+
+  function addRuntimeEvent(
+    message: string,
+    kind: RuntimeEvent["kind"] =
+      "info"
+  ) {
+    setRuntimeEvents((current) => [
+      {
+        id: crypto.randomUUID(),
+        timestamp:
+          new Date().toLocaleTimeString(),
+        message,
+        kind,
+      },
+      ...current,
+    ].slice(0, 40));
+  }
+
+
+  function recordRuntimeChanges(
+    services: RuntimeStatus[]
+  ) {
+    const events: RuntimeEvent[] = [];
+
+    for (const service of services) {
+      const previous =
+        lastRuntimeStatuses.current.get(
+          service.nodeId
+        );
+
+      if (
+        previous &&
+        previous !== service.status
+      ) {
+        const node =
+          nodes.find(
+            (current) =>
+              current.id ===
+              service.nodeId
+          );
+
+        const name =
+          String(
+            node?.data.label ||
+            service.componentType
+          );
+
+        let kind:
+          RuntimeEvent["kind"] =
+            "info";
+
+        if (
+          service.status === "Failed"
+        ) {
+          kind = "error";
+        } else if (
+          service.status ===
+            "Degraded" ||
+          service.status ===
+            "Unhealthy"
+        ) {
+          kind = "warning";
+        } else if (
+          service.status === "Healthy"
+        ) {
+          kind = "success";
+        }
+
+        events.push({
+          id: crypto.randomUUID(),
+
+          timestamp:
+            new Date().toLocaleTimeString(),
+
+          message:
+            `${name}: ${previous} → ${service.status}`,
+
+          kind,
+        });
+      }
+
+      lastRuntimeStatuses.current.set(
+        service.nodeId,
+        service.status
+      );
+    }
+
+    if (events.length > 0) {
+      setRuntimeEvents((current) =>
+        [
+          ...events.reverse(),
+          ...current,
+        ].slice(0, 40)
+      );
+    }
+  }
 
   function getRuntimeService(
     serviceId: string
@@ -412,7 +615,7 @@ function ArchitectureEditor() {
         return "redis:7-alpine";
 
       case "load-balancer":
-        return "Not implemented yet";
+        return "failover-load-balancer";
 
       case "worker":
         return "Not implemented yet";
@@ -582,9 +785,6 @@ function ArchitectureEditor() {
   }
 
   async function loadRuntimeStatus() {
-    const requestId =
-      ++runtimeRequestId.current;
-
     try {
       const response = await fetch(
         `http://localhost:5000/api/architectures/${id}/runtime-status`
@@ -597,16 +797,7 @@ function ArchitectureEditor() {
       const data =
         await response.json();
 
-      // If a newer request started while this one
-      // was running, ignore this old response.
-      if (
-        requestId !==
-        runtimeRequestId.current
-      ) {
-        return;
-      }
-
-      setRuntimeStatuses(
+      const services =
         data.services.map(
           (service: RuntimeStatus) => {
             if (
@@ -622,7 +813,14 @@ function ArchitectureEditor() {
 
             return service;
           }
-        )
+        );
+
+      recordRuntimeChanges(
+        services
+      );
+
+      setRuntimeStatuses(
+        services
       );
     } catch (error) {
       console.error(
@@ -1006,6 +1204,16 @@ function ArchitectureEditor() {
           (deployment) =>
             deployment.nodeId === node.id
         ) || null,
+
+      onTestRouting:
+        testLoadBalancer,
+
+      routingTest:
+        routingTests[node.id],
+
+      testingRouting:
+        testingRoutingNodeId ===
+        node.id,
     },
   }));
 
@@ -1057,6 +1265,23 @@ function ArchitectureEditor() {
       }
     );
   }
+  
+  function getPreviewStatus(
+    serviceId: string
+  ) {
+    if (!architectureDeployment) {
+      return "Ready";
+    }
+
+    return (
+      runtimeStatuses.find(
+        (runtime) =>
+          runtime.nodeId ===
+          serviceId
+      )?.status ||
+      "Not Deployed"
+    );
+  }
 
     return (
     <div className="editor-page">
@@ -1087,6 +1312,54 @@ function ArchitectureEditor() {
             ? "Starting & Checking Services..."
             : "Deploy Architecture Locally"}
         </button>
+
+        {architectureDeployment && (
+          <div className="runtime-event-panel">
+            <div className="runtime-event-header">
+              <strong>
+                Runtime Events
+              </strong>
+
+              {runtimeEvents.length >
+                0 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRuntimeEvents([])
+                  }
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <div className="runtime-event-list">
+              {runtimeEvents.length ===
+              0 ? (
+                <span className="runtime-event-empty">
+                  No runtime changes yet.
+                </span>
+              ) : (
+                runtimeEvents.map(
+                  (event) => (
+                    <div
+                      className={`runtime-event runtime-event-${event.kind}`}
+                      key={event.id}
+                    >
+                      <span>
+                        {event.timestamp}
+                      </span>
+
+                      <p>
+                        {event.message}
+                      </p>
+                    </div>
+                  )
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         <p>Components</p>
 
@@ -1351,8 +1624,16 @@ function ArchitectureEditor() {
                                 </span>
                               </div>
 
-                              <span className="runtime-ready-badge">
-                                Ready
+                              <span
+                                className={`runtime-live-badge runtime-live-${getPreviewStatus(
+                                  service.id
+                                )
+                                  .toLowerCase()
+                                  .replace(/\s+/g, "-")}`}
+                              >
+                                {getPreviewStatus(
+                                  service.id
+                                )}
                               </span>
                             </div>
 

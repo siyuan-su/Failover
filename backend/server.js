@@ -1095,10 +1095,142 @@ app.get("/api/architectures/:id/runtime-spec", (req, res) => {
   });
 });
 
+async function getNodeRuntimeStatus(
+  architectureId,
+  node
+) {
+  const containerName =
+    getRuntimeContainerName(
+      architectureId,
+      node.id
+    );
+
+  const dockerStatus =
+    await getContainerStatus(
+      containerName
+    );
+
+  let status = "Not Deployed";
+  let health = null;
+
+  if (dockerStatus === "running") {
+    status = "Running";
+
+    // API SERVER
+    if (
+      node.component_type ===
+      "API Server"
+    ) {
+      const hostPort =
+        await getPublishedPort(
+          containerName,
+          3000
+        );
+
+      if (hostPort) {
+        try {
+          const response = await fetch(
+            `http://127.0.0.1:${hostPort}/health`,
+            {
+              signal:
+                AbortSignal.timeout(1200),
+            }
+          );
+
+          health =
+            await response.json();
+
+          status =
+            health.status ||
+            "Running";
+        } catch {
+          status = "Unhealthy";
+        }
+      }
+    }
+
+    // LOAD BALANCER
+    if (
+      node.component_type ===
+      "Load Balancer"
+    ) {
+      const hostPort =
+        await getPublishedPort(
+          containerName,
+          3000
+        );
+
+      if (hostPort) {
+        try {
+          const response = await fetch(
+            `http://127.0.0.1:${hostPort}/health`,
+            {
+              signal:
+                AbortSignal.timeout(1200),
+            }
+          );
+
+          health =
+            await response.json();
+
+          status =
+            health.status ||
+            "Running";
+        } catch {
+          status = "Unhealthy";
+        }
+      }
+    }
+
+    // MYSQL
+    if (
+      node.component_type ===
+      "MySQL Database"
+    ) {
+      status = "Healthy";
+    }
+
+    // REDIS
+    if (
+      node.component_type ===
+      "Redis Cache"
+    ) {
+      const ready =
+        await isRedisReady(
+          containerName
+        );
+
+      status = ready
+        ? "Healthy"
+        : "Recovering";
+    }
+  }
+
+  if (
+    dockerStatus === "exited" ||
+    dockerStatus === "dead"
+  ) {
+    status = "Failed";
+  }
+
+  return {
+    nodeId: node.id,
+    componentType:
+      node.component_type,
+
+    containerName,
+    dockerStatus,
+    status,
+    health,
+  };
+}
+
+
 app.get(
   "/api/architectures/:id/runtime-status",
   async (req, res) => {
-    const architectureId = req.params.id;
+    const architectureId =
+      req.params.id;
 
     try {
       const nodes =
@@ -1106,131 +1238,20 @@ app.get(
           architectureId
         );
 
-      const services = [];
-
-      for (const node of nodes) {
-        const containerName =
-          getRuntimeContainerName(
-            architectureId,
-            node.id
-          );
-
-        const dockerStatus =
-          await getContainerStatus(
-            containerName
-          );
-
-        let status = "Not Deployed";
-        let health = null;
-
-        if (dockerStatus === "running") {
-          status = "Running";
-
-          // API Server has an HTTP health endpoint,
-          // so use it for the real runtime status.
-          if (
-            node.component_type === "API Server"
-          ) {
-            const hostPort =
-              await getPublishedPort(
-                containerName,
-                3000
-              );
-
-            if (hostPort) {
-              try {
-                const response = await fetch(
-                  `http://127.0.0.1:${hostPort}/health`,
-                  {
-                    signal:
-                      AbortSignal.timeout(750),
-                  }
-                );
-
-                health =
-                  await response.json();
-
-                status =
-                  health.status ||
-                  "Running";
-              } catch {
-                status = "Unhealthy";
-              }
-            }
-          }
-
-          if (
-            node.component_type ===
-            "Load Balancer"
-          ) {
-            const hostPort =
-              await getPublishedPort(
-                containerName,
-                3000
-              );
-
-            if (hostPort) {
-              try {
-                const response = await fetch(
-                  `http://127.0.0.1:${hostPort}/health`,
-                  {
-                    signal:
-                      AbortSignal.timeout(1000),
-                  }
-                );
-
-                health =
-                  await response.json();
-
-                status =
-                  health.status ||
-                  "Running";
-              } catch {
-                status = "Unhealthy";
-              }
-            }
-          }
-
-          if (
-            node.component_type ===
-            "MySQL Database"
-          ) {
-            status = "Healthy";
-          }
-
-          if (
-            node.component_type ===
-            "Redis Cache"
-          ) {
-            const ready =
-              await isRedisReady(
-                containerName
-              );
-
-            status = ready
-              ? "Healthy"
-              : "Recovering";
-          }
-        }
-
-        if (
-          dockerStatus === "exited" ||
-          dockerStatus === "dead"
-        ) {
-          status = "Failed";
-        }
-
-        services.push({
-          nodeId: node.id,
-          componentType:
-            node.component_type,
-
-          containerName,
-          dockerStatus,
-          status,
-          health,
-        });
-      }
+      /*
+       * Check every container in parallel.
+       * One slow API no longer blocks
+       * all the others.
+       */
+      const services =
+        await Promise.all(
+          nodes.map((node) =>
+            getNodeRuntimeStatus(
+              architectureId,
+              node
+            )
+          )
+        );
 
       res.json({
         architectureId:
@@ -1564,6 +1585,91 @@ app.post(
       res.status(500).json({
         error: "Failed to stop service",
         details: error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/runtime/:nodeId/test-route",
+  async (req, res) => {
+    const {
+      id: architectureId,
+      nodeId,
+    } = req.params;
+
+    try {
+      const nodes =
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      const node = nodes.find(
+        (current) =>
+          current.id === nodeId
+      );
+
+      if (!node) {
+        return res.status(404).json({
+          error: "Component not found",
+        });
+      }
+
+      if (
+        node.component_type !==
+        "Load Balancer"
+      ) {
+        return res.status(400).json({
+          error:
+            "Traffic tests only apply to Load Balancers",
+        });
+      }
+
+      const containerName =
+        getRuntimeContainerName(
+          architectureId,
+          nodeId
+        );
+
+      const hostPort =
+        await getPublishedPort(
+          containerName,
+          3000
+        );
+
+      if (!hostPort) {
+        return res.status(400).json({
+          error:
+            "Load Balancer is not deployed",
+        });
+      }
+
+      const response = await fetch(
+        `http://127.0.0.1:${hostPort}/`,
+        {
+          signal:
+            AbortSignal.timeout(2000),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      res.status(response.status).json({
+        ...result,
+        hostPort,
+      });
+    } catch (error) {
+      console.error(
+        "Traffic test failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Traffic test failed",
+        details:
+          error.message,
       });
     }
   }

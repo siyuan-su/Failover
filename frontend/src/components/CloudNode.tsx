@@ -56,6 +56,28 @@ type CloudNodeData = {
     containerName: string;
     dockerStatus: string;
     status: string;
+
+    health?: {
+      activeBackends?: number;
+      totalBackends?: number;
+
+      backends?: {
+        host: string;
+        healthy: boolean;
+      }[];
+    };
+  };
+
+  onTestRouting?: (
+    nodeId: string
+  ) => void;
+
+  testingRouting?: boolean;
+
+  routingTest?: {
+    status?: string;
+    routedTo?: string;
+    error?: string;
   };
 
   onStopRuntime?: (
@@ -256,19 +278,6 @@ export default function CloudNode({
             </label>
 
             <div className="node-popup-actions">
-              {nodeData.componentType === "API Server" && (
-                <button
-                  className="popup-deploy-button"
-                  disabled={nodeData.deploying}
-                  onClick={() =>
-                    nodeData.onDeploy?.(id)
-                  }
-                >
-                  {nodeData.deploying
-                    ? "Deploying..."
-                    : "Deploy Locally"}
-                </button>
-              )}
 
               <button
                 className="popup-delete-button"
@@ -302,6 +311,101 @@ export default function CloudNode({
                 </button>
               )}
             </div>
+            {nodeData.componentType ===
+                "Load Balancer" &&
+                nodeData.runtimeStatus && (
+                  <div className="lb-runtime-card">
+                    <div className="lb-runtime-header">
+                      <span>
+                        Active Backends
+                      </span>
+
+                      <strong>
+                        {nodeData.runtimeStatus
+                          .health
+                          ?.activeBackends ??
+                          0}
+                        {" / "}
+                        {nodeData.runtimeStatus
+                          .health
+                          ?.totalBackends ??
+                          0}
+                      </strong>
+                    </div>
+
+                    <div className="lb-backend-list">
+                      {nodeData.runtimeStatus
+                        .health
+                        ?.backends?.map(
+                          (backend) => (
+                            <div
+                              className="lb-backend-row"
+                              key={backend.host}
+                            >
+                              <span
+                                className={`lb-backend-dot ${
+                                  backend.healthy
+                                    ? "healthy"
+                                    : "failed"
+                                }`}
+                              />
+
+                              <span>
+                                {backend.host}
+                              </span>
+
+                              <strong>
+                                {backend.healthy
+                                  ? "Healthy"
+                                  : "Failed"}
+                              </strong>
+                            </div>
+                          )
+                        )}
+                    </div>
+
+                    <button
+                      type="button"
+                      className="lb-test-button"
+                      disabled={
+                        nodeData.testingRouting
+                      }
+                      onClick={() =>
+                        nodeData.onTestRouting?.(
+                          id
+                        )
+                      }
+                    >
+                      {nodeData.testingRouting
+                        ? "Testing..."
+                        : "Test Traffic Routing"}
+                    </button>
+
+                    {nodeData.routingTest
+                      ?.routedTo && (
+                      <div className="lb-route-result">
+                        Routed to{" "}
+                        <strong>
+                          {
+                            nodeData
+                              .routingTest
+                              .routedTo
+                          }
+                        </strong>
+                      </div>
+                    )}
+
+                    {nodeData.routingTest
+                      ?.error && (
+                      <div className="lb-route-error">
+                        {
+                          nodeData.routingTest
+                            .error
+                        }
+                      </div>
+                    )}
+                  </div>
+                )}
           </div>
 
           {nodeData.deployment && (

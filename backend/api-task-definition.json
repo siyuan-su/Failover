@@ -1,0 +1,33 @@
+{
+  "family": "failover-api-server",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::799061512407:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "failover-api-server",
+      "image": "799061512407.dkr.ecr.us-east-1.amazonaws.com/failover-api-server:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 3000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SERVICE_NAME",
+          "value": "AWS Payment API"
+        },
+        {
+          "name": "CAPACITY",
+          "value": "500"
+        }
+      ]
+    }
+  ]
+}
