@@ -194,7 +194,7 @@ function Dashboard() {
 
 type DeploymentTarget =
   | "local"
-  | "aws";
+  | "cloud";
 
 type DeploymentResult = {
   error?: string;
@@ -924,15 +924,17 @@ function ArchitectureEditor() {
   }
 
   async function deployArchitecture() {
-    if (deploymentTarget === "aws") {
-      await deployArchitectureAws();
+    if (
+      deploymentTarget === "cloud"
+    ) {
+      await deployArchitectureCloud();
       return;
     }
 
     await deployArchitectureLocally();
   }
 
-  async function deployArchitectureAws() {
+  async function deployArchitectureCloud() {
     if (cloudDeploying) {
       return;
     }
@@ -940,17 +942,15 @@ function ArchitectureEditor() {
     setCloudDeploying(true);
 
     try {
-      // Make sure AWS receives the newest
-      // version of the architecture.
       await saveEditor();
 
       addRuntimeEvent(
-        "Starting AWS deployment...",
+        "Starting multi-cloud deployment...",
         "info"
       );
 
       const response = await fetch(
-        `http://localhost:5000/api/architectures/${id}/deploy-aws`,
+        `http://localhost:5000/api/architectures/${id}/deploy-cloud`,
         {
           method: "POST",
         }
@@ -962,13 +962,13 @@ function ArchitectureEditor() {
       if (!response.ok) {
         throw new Error(
           data.details ||
-          data.error ||
-          "AWS deployment failed"
+            data.error ||
+            "Cloud deployment failed"
         );
       }
 
       console.log(
-        "AWS deployment:",
+        "Cloud deployment:",
         data
       );
 
@@ -977,25 +977,25 @@ function ArchitectureEditor() {
         data.deployments || []
       ) {
         addRuntimeEvent(
-          `${deployment.serviceName} deployed to AWS`,
+          `${deployment.serviceName} deployed to ${deployment.provider}`,
           "success"
         );
       }
 
       addRuntimeEvent(
-        `AWS deployment started in ${data.region}`,
+        "Multi-cloud deployment completed",
         "success"
       );
     } catch (error) {
       console.error(
-        "AWS deployment failed:",
+        "Cloud deployment failed:",
         error
       );
 
       addRuntimeEvent(
         error instanceof Error
-          ? `AWS deployment failed: ${error.message}`
-          : "AWS deployment failed",
+          ? `Cloud deployment failed: ${error.message}`
+          : "Cloud deployment failed",
         "error"
       );
     } finally {
@@ -1257,7 +1257,7 @@ function ArchitectureEditor() {
             region:
               value === "AWS"
                 ? "us-east-1"
-                : "canada-central",
+                : "northcentralus",
           };
         }
 
@@ -1406,45 +1406,42 @@ function ArchitectureEditor() {
 
         <div className="deployment-target">
           <label>
-            Deployment Target
+            Deployment Mode
           </label>
 
           <select
             value={deploymentTarget}
             onChange={(event) =>
               setDeploymentTarget(
-                event.target
-                  .value as DeploymentTarget
+                event.target.value as DeploymentTarget
               )
             }
           >
             <option value="local">
-              Local Docker
+              Local Simulation
             </option>
 
-            <option value="aws">
-              AWS
+            <option value="cloud">
+              Cloud Deployment
             </option>
           </select>
         </div>
 
         <button
           className="deploy-architecture-button"
-          onClick={
-            deployArchitecture
-          }
+          onClick={deployArchitecture}
           disabled={
             deployingArchitecture ||
             cloudDeploying
           }
         >
           {cloudDeploying
-            ? "Deploying to AWS..."
+            ? "Deploying to Cloud..."
             : deployingArchitecture
               ? "Deploying Locally..."
-              : deploymentTarget === "aws"
-                ? "Deploy Architecture to AWS"
-                : "Deploy Architecture Locally"}
+              : deploymentTarget === "cloud"
+                ? "Deploy Architecture"
+                : "Run Local Simulation"}
         </button>
 
         {runtimeEvents.length > 0 && (
@@ -1732,11 +1729,12 @@ function ArchitectureEditor() {
                 {/* SUMMARY */}
                 <div className="runtime-preview-summary">
                   <div className="runtime-summary-item">
-                    <span>Target</span>
+                    <span>Mode</span>
+
                     <strong>
-                      {deploymentTarget === "aws"
-                        ? "AWS"
-                        : "Local Docker"}
+                      {deploymentTarget === "cloud"
+                        ? "Multi-Cloud"
+                        : "Local Simulation"}
                     </strong>
                   </div>
 
@@ -2040,24 +2038,19 @@ function ArchitectureEditor() {
                   </button>
 
                   <button
-                    className="runtime-deploy-button"
+                    onClick={deployArchitecture}
                     disabled={
                       deployingArchitecture ||
                       cloudDeploying
                     }
-                    onClick={async () => {
-                      await deployArchitecture()
-
-                      setShowRuntimePreview(false);
-                    }}
                   >
                     {cloudDeploying
-                      ? "Deploying to AWS..."
+                      ? "Deploying to Cloud..."
                       : deployingArchitecture
                         ? "Deploying Locally..."
-                        : deploymentTarget === "aws"
-                          ? "Deploy Architecture to AWS"
-                          : "Deploy Architecture Locally"}
+                        : deploymentTarget === "cloud"
+                          ? "Deploy Architecture"
+                          : "Run Local Simulation"}
                   </button>
                 </div>
               </div>

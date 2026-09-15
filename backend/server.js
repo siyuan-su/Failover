@@ -19,6 +19,10 @@ const {
   deployContainerToAws,
 } = require("./cloud/aws");
 
+const {
+  deployContainerToAzure,
+} = require("./cloud/azure");
+
 function getAwsConfig() {
   const region =
     process.env.AWS_REGION ||
@@ -74,6 +78,41 @@ function getAwsConfig() {
     executionRoleArn,
     subnetIds,
     securityGroupIds,
+  };
+}
+
+function getAzureConfig() {
+  const resourceGroup =
+    process.env.AZURE_RESOURCE_GROUP ||
+    "failover-rg";
+
+  const location =
+    process.env.AZURE_LOCATION ||
+    "northcentralus";
+
+  const registryName =
+    process.env.AZURE_ACR_NAME;
+
+  const registryServer =
+    process.env.AZURE_ACR_SERVER;
+
+  if (!registryName) {
+    throw new Error(
+      "AZURE_ACR_NAME is missing"
+    );
+  }
+
+  if (!registryServer) {
+    throw new Error(
+      "AZURE_ACR_SERVER is missing"
+    );
+  }
+
+  return {
+    resourceGroup,
+    location,
+    registryName,
+    registryServer,
   };
 }
 
@@ -1878,6 +1917,188 @@ app.post(
       res.status(500).json({
         error:
           "AWS deployment failed",
+
+        details:
+          error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/deploy-cloud",
+  async (req, res) => {
+    const architectureId =
+      req.params.id;
+
+    try {
+      const nodes =
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      const apiNodes =
+        nodes.filter(
+          (node) =>
+            node.component_type ===
+            "API Server"
+        );
+
+      if (apiNodes.length === 0) {
+        return res.status(400).json({
+          error:
+            "Architecture has no API Server components",
+        });
+      }
+
+      const awsConfig =
+        getAwsConfig();
+
+      const azureConfig =
+        getAzureConfig();
+
+      const deployments = [];
+
+      for (const node of apiNodes) {
+        const provider =
+          String(
+            node.provider || ""
+          ).toLowerCase();
+
+        let deployment;
+
+        if (provider === "aws") {
+          deployment =
+            await deployContainerToAws({
+              architectureId,
+
+              serviceName:
+                node.label ||
+                "Payment API",
+
+              localImage:
+                "failover-api-server",
+
+              region:
+                node.region ||
+                awsConfig.region,
+
+              clusterName:
+                awsConfig.clusterName,
+
+              executionRoleArn:
+                awsConfig.executionRoleArn,
+
+              subnetIds:
+                awsConfig.subnetIds,
+
+              securityGroupIds:
+                awsConfig.securityGroupIds,
+
+              containerPort: 3000,
+
+              environment: [
+                {
+                  name:
+                    "SERVICE_NAME",
+
+                  value:
+                    node.label ||
+                    "Payment API",
+                },
+
+                {
+                  name:
+                    "CAPACITY",
+
+                  value: String(
+                    node.capacity ||
+                    500
+                  ),
+                },
+              ],
+            });
+        } else if (
+          provider === "azure"
+        ) {
+          deployment =
+            await deployContainerToAzure({
+              architectureId,
+
+              serviceName:
+                node.label ||
+                "Payment API",
+
+              localImage:
+                "failover-api-server",
+
+              resourceGroup:
+                azureConfig.resourceGroup,
+
+              location:
+                node.region ||
+                azureConfig.location,
+
+              registryName:
+                azureConfig.registryName,
+
+              registryServer:
+                azureConfig.registryServer,
+
+              containerPort: 3000,
+
+              environment: [
+                {
+                  name:
+                    "SERVICE_NAME",
+
+                  value:
+                    node.label ||
+                    "Payment API",
+                },
+
+                {
+                  name:
+                    "CAPACITY",
+
+                  value: String(
+                    node.capacity ||
+                    500
+                  ),
+                },
+              ],
+            });
+        } else {
+          throw new Error(
+            `${node.label} has unsupported provider "${node.provider}"`
+          );
+        }
+
+        deployments.push({
+          nodeId: node.id,
+          ...deployment,
+        });
+      }
+
+      res.json({
+        architectureId:
+          Number(architectureId),
+
+        mode: "multi-cloud",
+
+        status: "Deployed",
+
+        deployments,
+      });
+    } catch (error) {
+      console.error(
+        "Multi-cloud deployment failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Multi-cloud deployment failed",
 
         details:
           error.message,
