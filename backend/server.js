@@ -15,6 +15,68 @@ const app = express();
 
 const crypto = require("crypto");
 
+const {
+  deployContainerToAws,
+} = require("./cloud/aws");
+
+function getAwsConfig() {
+  const region =
+    process.env.AWS_REGION ||
+    "us-east-1";
+
+  const clusterName =
+    process.env.AWS_ECS_CLUSTER ||
+    "failover-cluster";
+
+  const executionRoleArn =
+    process.env
+      .AWS_ECS_EXECUTION_ROLE_ARN;
+
+  const subnetIds =
+    (process.env.AWS_SUBNET_IDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  const securityGroupIds =
+    (
+      process.env
+        .AWS_SECURITY_GROUP_IDS ||
+      ""
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+  if (!executionRoleArn) {
+    throw new Error(
+      "AWS_ECS_EXECUTION_ROLE_ARN is missing"
+    );
+  }
+
+  if (subnetIds.length === 0) {
+    throw new Error(
+      "AWS_SUBNET_IDS is missing"
+    );
+  }
+
+  if (
+    securityGroupIds.length === 0
+  ) {
+    throw new Error(
+      "AWS_SECURITY_GROUP_IDS is missing"
+    );
+  }
+
+  return {
+    region,
+    clusterName,
+    executionRoleArn,
+    subnetIds,
+    securityGroupIds,
+  };
+}
+
 function normalizeComponentType(componentType) {
   switch (componentType) {
     case "API Server":
@@ -1709,6 +1771,116 @@ app.post(
       res.status(500).json({
         error: "Failed to restart service",
         details: error.message,
+      });
+    }
+  }
+);
+
+app.post(
+  "/api/architectures/:id/deploy-aws",
+  async (req, res) => {
+    const architectureId =
+      req.params.id;
+
+    try {
+      const nodes =
+        await getArchitectureNodes(
+          architectureId
+        );
+
+      const {
+        region,
+        clusterName,
+        executionRoleArn,
+        subnetIds,
+        securityGroupIds,
+      } = getAwsConfig();
+
+      const apiNodes =
+        nodes.filter(
+          (node) =>
+            node.component_type ===
+            "API Server"
+        );
+
+      if (apiNodes.length === 0) {
+        return res.status(400).json({
+          error:
+            "Architecture has no API Server components",
+        });
+      }
+
+      const deployments = [];
+
+      for (const node of apiNodes) {
+        const deployment =
+          await deployContainerToAws({
+            architectureId,
+
+            serviceName:
+              node.label ||
+              "payment-api",
+
+            localImage:
+              "failover-api-server",
+
+            region,
+            clusterName,
+            executionRoleArn,
+            subnetIds,
+            securityGroupIds,
+
+            containerPort: 3000,
+
+            environment: [
+              {
+                name:
+                  "SERVICE_NAME",
+
+                value:
+                  node.label ||
+                  "Payment API",
+              },
+
+              {
+                name:
+                  "CAPACITY",
+
+                value: String(
+                  node.capacity ||
+                  500
+                ),
+              },
+            ],
+          });
+
+        deployments.push({
+          nodeId: node.id,
+          ...deployment,
+        });
+      }
+
+      res.json({
+        architectureId:
+          Number(architectureId),
+
+        provider: "AWS",
+        region,
+        status: "Deploying",
+        deployments,
+      });
+    } catch (error) {
+      console.error(
+        "AWS deployment failed:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "AWS deployment failed",
+
+        details:
+          error.message,
       });
     }
   }

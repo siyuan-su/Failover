@@ -192,6 +192,10 @@ function Dashboard() {
   );
 }
 
+type DeploymentTarget =
+  | "local"
+  | "aws";
+
 type DeploymentResult = {
   error?: string;
 
@@ -380,10 +384,27 @@ function ArchitectureEditor() {
     []
   );
 
+  const [
+    showRuntimeHistory,
+    setShowRuntimeHistory,
+  ] = useState(false);
+
   const lastRuntimeStatuses =
     useRef<Map<string, string>>(
       new Map()
     );
+
+  const [
+    deploymentTarget,
+    setDeploymentTarget,
+  ] = useState<DeploymentTarget>(
+    "local"
+  );
+
+  const [
+    cloudDeploying,
+    setCloudDeploying,
+  ] = useState(false);
 
   useEffect(() => {
     async function loadArchitecture() {
@@ -902,6 +923,86 @@ function ArchitectureEditor() {
     }
   }
 
+  async function deployArchitecture() {
+    if (deploymentTarget === "aws") {
+      await deployArchitectureAws();
+      return;
+    }
+
+    await deployArchitectureLocally();
+  }
+
+  async function deployArchitectureAws() {
+    if (cloudDeploying) {
+      return;
+    }
+
+    setCloudDeploying(true);
+
+    try {
+      // Make sure AWS receives the newest
+      // version of the architecture.
+      await saveEditor();
+
+      addRuntimeEvent(
+        "Starting AWS deployment...",
+        "info"
+      );
+
+      const response = await fetch(
+        `http://localhost:5000/api/architectures/${id}/deploy-aws`,
+        {
+          method: "POST",
+        }
+      );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.details ||
+          data.error ||
+          "AWS deployment failed"
+        );
+      }
+
+      console.log(
+        "AWS deployment:",
+        data
+      );
+
+      for (
+        const deployment of
+        data.deployments || []
+      ) {
+        addRuntimeEvent(
+          `${deployment.serviceName} deployed to AWS`,
+          "success"
+        );
+      }
+
+      addRuntimeEvent(
+        `AWS deployment started in ${data.region}`,
+        "success"
+      );
+    } catch (error) {
+      console.error(
+        "AWS deployment failed:",
+        error
+      );
+
+      addRuntimeEvent(
+        error instanceof Error
+          ? `AWS deployment failed: ${error.message}`
+          : "AWS deployment failed",
+        "error"
+      );
+    } finally {
+      setCloudDeploying(false);
+    }
+  }
+
   async function deployArchitectureLocally() {
     setDeployingArchitecture(true);
     setArchitectureDeployment(null);
@@ -1303,62 +1404,59 @@ function ArchitectureEditor() {
             : "Preview Runtime"}
         </button>
 
+        <div className="deployment-target">
+          <label>
+            Deployment Target
+          </label>
+
+          <select
+            value={deploymentTarget}
+            onChange={(event) =>
+              setDeploymentTarget(
+                event.target
+                  .value as DeploymentTarget
+              )
+            }
+          >
+            <option value="local">
+              Local Docker
+            </option>
+
+            <option value="aws">
+              AWS
+            </option>
+          </select>
+        </div>
+
         <button
           className="deploy-architecture-button"
-          onClick={deployArchitectureLocally}
-          disabled={deployingArchitecture}
+          onClick={
+            deployArchitecture
+          }
+          disabled={
+            deployingArchitecture ||
+            cloudDeploying
+          }
         >
-          {deployingArchitecture
-            ? "Starting & Checking Services..."
-            : "Deploy Architecture Locally"}
+          {cloudDeploying
+            ? "Deploying to AWS..."
+            : deployingArchitecture
+              ? "Deploying Locally..."
+              : deploymentTarget === "aws"
+                ? "Deploy Architecture to AWS"
+                : "Deploy Architecture Locally"}
         </button>
 
-        {architectureDeployment && (
-          <div className="runtime-event-panel">
-            <div className="runtime-event-header">
-              <strong>
-                Runtime Events
-              </strong>
-
-              {runtimeEvents.length >
-                0 && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    setRuntimeEvents([])
-                  }
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            <div className="runtime-event-list">
-              {runtimeEvents.length ===
-              0 ? (
-                <span className="runtime-event-empty">
-                  No runtime changes yet.
-                </span>
-              ) : (
-                runtimeEvents.map(
-                  (event) => (
-                    <div
-                      className={`runtime-event runtime-event-${event.kind}`}
-                      key={event.id}
-                    >
-                      <span>
-                        {event.timestamp}
-                      </span>
-
-                      <p>
-                        {event.message}
-                      </p>
-                    </div>
-                  )
-                )
-              )}
-            </div>
-          </div>
+        {runtimeEvents.length > 0 && (
+          <button
+            className="runtime-history-button"
+            onClick={() =>
+              setShowRuntimeHistory(true)
+            }
+          >
+            Runtime History
+            <span>{runtimeEvents.length}</span>
+          </button>
         )}
 
         <p>Components</p>
@@ -1525,8 +1623,74 @@ function ArchitectureEditor() {
               {locked ? "🔒" : "🔓"}
             </ControlButton>
           </Controls>
-                </ReactFlow>
-      </div>
+      </ReactFlow>
+        </div>
+          {showRuntimeHistory && (
+            <div
+              className="runtime-history-overlay"
+              onMouseDown={() =>
+                setShowRuntimeHistory(false)
+              }
+            >
+              <div
+                className="runtime-history-modal"
+                onMouseDown={(event) =>
+                  event.stopPropagation()
+                }
+              >
+                <div className="runtime-history-header">
+                  <div>
+                    <span>Runtime</span>
+                    <h2>Event History</h2>
+                  </div>
+
+                  <button
+                    onClick={() =>
+                      setShowRuntimeHistory(false)
+                    }
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="runtime-history-list">
+                  {runtimeEvents.length === 0 ? (
+                    <div className="runtime-history-empty">
+                      No runtime events yet.
+                    </div>
+                  ) : (
+                    runtimeEvents.map((event) => (
+                      <div
+                        key={event.id}
+                        className={`runtime-history-event runtime-history-${event.kind}`}
+                      >
+                        <span>
+                          {event.timestamp}
+                        </span>
+
+                        <strong>
+                          {event.message}
+                        </strong>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="runtime-history-footer">
+                  <button
+                    onClick={() =>
+                      setRuntimeEvents([])
+                    }
+                    disabled={
+                      runtimeEvents.length === 0
+                    }
+                  >
+                    Clear History
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           {showRuntimePreview && runtimePreview && (
             <div
               className="runtime-preview-overlay"
@@ -1569,7 +1733,11 @@ function ArchitectureEditor() {
                 <div className="runtime-preview-summary">
                   <div className="runtime-summary-item">
                     <span>Target</span>
-                    <strong>Local Docker</strong>
+                    <strong>
+                      {deploymentTarget === "aws"
+                        ? "AWS"
+                        : "Local Docker"}
+                    </strong>
                   </div>
 
                   <div className="runtime-summary-item">
@@ -1873,16 +2041,23 @@ function ArchitectureEditor() {
 
                   <button
                     className="runtime-deploy-button"
-                    disabled={deployingArchitecture}
+                    disabled={
+                      deployingArchitecture ||
+                      cloudDeploying
+                    }
                     onClick={async () => {
-                      await deployArchitectureLocally();
+                      await deployArchitecture()
 
                       setShowRuntimePreview(false);
                     }}
                   >
-                    {deployingArchitecture
-                      ? "Starting Services..."
-                      : "Deploy Architecture Locally"}
+                    {cloudDeploying
+                      ? "Deploying to AWS..."
+                      : deployingArchitecture
+                        ? "Deploying Locally..."
+                        : deploymentTarget === "aws"
+                          ? "Deploy Architecture to AWS"
+                          : "Deploy Architecture Locally"}
                   </button>
                 </div>
               </div>
